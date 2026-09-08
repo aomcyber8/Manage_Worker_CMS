@@ -1,0 +1,80 @@
+main {
+  max-width: 1800px;
+  padding-left: clamp(16px, 2vw, 32px);
+  padding-right: clamp(16px, 2vw, 32px);
+}
+
+.workspace {
+  grid-template-columns: 310px minmax(0, 1fr);
+  gap: 18px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.records table {
+  min-width: 1220px;
+}
+
+.records-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.records-actions .export-button {
+  width: auto;
+  min-width: 118px;
+  margin: 0;
+  padding: 10px 14px;
+}
+
+.records th:nth-child(4),
+.records td:nth-child(4) {
+  min-width: 180px;
+  white-space: nowrap;
+}
+
+.records th:nth-child(6),
+.records td:nth-child(6) {
+  min-width: 200px;
+  white-space: nowrap;
+}
+
+.records th:nth-child(7),
+.records td:nth-child(7) {
+  min-width: 200px;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.records th:nth-child(8),
+.records td:nth-child(8) {
+  min-width: 120px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1000px) {
+  main {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .workspace {
+    grid-template-columns: 290px minmax(0, 1fr);
+    gap: 16px;
+  }
+}
+
+@media (max-width: 720px) {
+  main {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}
