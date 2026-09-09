@@ -188,7 +188,8 @@ public class ExcelService {
     private static String resultLabel(WorkerResult result) {
         if (result == null) return "รอดำเนินการ";
         return switch (result.status()) {
-            case SUCCESS, SKIPPED -> "พบข้อมูล";
+            case SUCCESS -> "Ex-Employee";
+            case SKIPPED -> "พบข้อมูล";
             case NOT_FOUND -> "ไม่พบ";
             case FAILED -> "ผิดพลาด";
         };
@@ -196,6 +197,7 @@ public class ExcelService {
     private static Map<String, CellStyle> statusStyles(Workbook book) {
         Map<String, IndexedColors> colors = Map.of(
             "รอดำเนินการ", IndexedColors.GREY_25_PERCENT, "พบข้อมูล", IndexedColors.LIGHT_GREEN,
+            "Ex-Employee", IndexedColors.BRIGHT_GREEN,
             "ไม่พบ", IndexedColors.LIGHT_YELLOW, "ผิดพลาด", IndexedColors.ROSE
         );
         Map<String, CellStyle> styles = new HashMap<>();

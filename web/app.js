@@ -3,8 +3,8 @@ let state = {}, busy = false;
 const today = new Date();
 const localMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
 const siteLabels = {SENA:"SENA — sena.on.lk",SENX:"SENX — senx.on.lk"};
-const labels = {idle:'พร้อมใช้งาน',ready:'พร้อมตรวจสอบ',running:'กำลังทำงาน',finishing:'กำลังออกจากระบบ',done:'งานเสร็จแล้ว',stopped:'หยุดงานแล้ว',failed:'งานมีข้อผิดพลาด'};
-const searchResultLabels = {SUCCESS:'พบข้อมูล',SKIPPED:'พบข้อมูล',NOT_FOUND:'ไม่พบ',FAILED:'ผิดพลาด'};
+const labels = {idle:'พร้อมใช้งาน',ready:'พร้อมตรวจสอบ',running:'กำลังทำงาน',checking:'กำลังทดสอบค้นหารายการ',deactivating:'กำลังปิดสิทธิ์ใช้งาน',finishing:'กำลังออกจากระบบ',done:'งานเสร็จแล้ว',stopped:'หยุดงานแล้ว',failed:'งานมีข้อผิดพลาด'};
+const searchResultLabels = {SUCCESS:'Ex-Employee',SKIPPED:'พบข้อมูล',NOT_FOUND:'ไม่พบ',FAILED:'ผิดพลาด'};
 function error(message) { $('error').textContent = message; $('error').hidden = !message; }
 async function api(path, data) {
   const response = await fetch(path, data ? {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.token},body:JSON.stringify(data)} : {});
@@ -40,7 +40,12 @@ function render() {
   $('failed').textContent=results.filter(r=>['FAILED','NOT_FOUND'].includes(r.status)).length;
   $('progress').max=records.length || 1; $('progress').value=results.length;
   $('empty').hidden=records.length>0;
-  $('dry').disabled=$('deactivate').disabled=busy || active || !records.length || !state.configured || !$('site').value || $('site').value!==state.site;
+  const validDryResults=results.length===records.length && results.every(result=>['SKIPPED','NOT_FOUND'].includes(result.status));
+  const dryRunComplete=state.phase==='done' && state.mode==='dry-run' && validDryResults;
+  const foundCount=results.filter(result=>result.status==='SKIPPED').length;
+  const unavailable=busy || active || !records.length || !state.configured || !$('site').value || $('site').value!==state.site;
+  $('dry').disabled=unavailable;
+  $('deactivate').disabled=unavailable || !dryRunComplete || foundCount===0;
   $('export').disabled=busy || active || !records.length;
   for(const id of ['preview','file','header-row','sheet','site','resign-month','fetch-resign']) $(id).disabled=busy || active;
   $('stop').hidden=!active;
@@ -115,7 +120,7 @@ $('upload').addEventListener('submit',event=>{event.preventDefault();action(asyn
 });});
 $('dry').addEventListener('click',()=>action(()=>api('/api/start',{site:$('site').value,mode:'dry-run',revision:state.revision})));
 $('export').addEventListener('click',()=>action(downloadExport));
-$('deactivate').addEventListener('click',()=>{$('confirm-site').textContent=siteLabels[state.site];$('deactivate-count').textContent=state.records.length;$('confirmation').value='';$('confirm').showModal();$('confirmation').focus();});
+$('deactivate').addEventListener('click',()=>{$('confirm-site').textContent=siteLabels[state.site];$('deactivate-count').textContent=(state.results || []).filter(result=>result.status==='SKIPPED').length;$('confirmation').value='';$('confirm').showModal();$('confirmation').focus();});
 $('cancel').addEventListener('click',()=>$('confirm').close());
 $('confirm-form').addEventListener('submit',event=>{event.preventDefault();const confirmation=$('confirmation').value;$('confirm').close();action(()=>api('/api/start',{site:state.site,mode:'deactivate',revision:state.revision,confirmation}));});
 $('stop').addEventListener('click',()=>action(async()=>{await api('/api/stop',{});$('phase').textContent='กำลังรอให้รายการปัจจุบันจบ';}));

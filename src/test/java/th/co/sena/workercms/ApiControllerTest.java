@@ -54,6 +54,18 @@ class ApiControllerTest {
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Disposition", org.hamcrest.Matchers.containsString("workers_SENA_")));
     }
 
+    @Test void rejectsDeactivateUntilCurrentDryRunIsComplete() throws Exception {
+        var record = new WorkerRecord(2, "BK001", "สมชาย ใจดี", "01/08/2026", "BK001", "0001",
+            "นายสมชาย ใจดี", "a@sena.co.th", "ผู้จัดการ", "ฝ่ายขาย");
+        state.preview(CmsSite.SENA, "workers.xlsx", java.util.List.of(record));
+
+        String body = "{\"site\":\"SENA\",\"mode\":\"deactivate\",\"revision\":\"" + state.revision()
+            + "\",\"confirmation\":\"DEACTIVATE\"}";
+        mvc.perform(post("/api/start").header("Host", "127.0.0.1:80").header("X-CSRF-Token", state.token())
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("ทดสอบรายการให้เสร็จครบ")));
+    }
     @Test void importsResignHistoryForSelectedMonth() throws Exception {
         var record = new WorkerRecord(1, "BK001", "สมชาย ใจดี", "01/08/2026", "BK001", "0001", "นายสมชาย ใจดี", "a@sena.co.th", "ผู้จัดการ", "ฝ่ายขาย");
         Mockito.when(resignHistory.load(java.time.YearMonth.of(2026, 8))).thenReturn(java.util.List.of(record));

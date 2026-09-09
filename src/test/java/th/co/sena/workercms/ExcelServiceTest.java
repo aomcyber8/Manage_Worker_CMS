@@ -49,7 +49,7 @@ class ExcelServiceTest {
         try (Workbook book = new XSSFWorkbook(new ByteArrayInputStream(raw))) {
             var sheet = book.getSheet("Workers");
             assertEquals("A2", sheet.getPaneInformation() == null ? "" : "A2");
-            assertEquals("พบข้อมูล", sheet.getRow(1).getCell(7).getStringCellValue());
+            assertEquals("Ex-Employee", sheet.getRow(1).getCell(7).getStringCellValue());
             assertEquals(CellType.STRING, sheet.getRow(1).getCell(1).getCellType());
             assertEquals("=2+2", sheet.getRow(1).getCell(1).getStringCellValue());
             assertTrue(org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(sheet.getRow(1).getCell(0)));

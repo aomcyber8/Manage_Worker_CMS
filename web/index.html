@@ -13,7 +13,7 @@
 <label>ชื่อชีต <span class="muted">(เว้นว่างเพื่อใช้ชีตปัจจุบัน)</span><input id="sheet" placeholder="เช่น Sheet1"></label>
 <button class="primary" id="preview" type="submit">อ่านไฟล์และแสดงรายการ</button></form>
 <div class="divider"></div><div class="section-title"><span class="step">2</span><h2>ดำเนินการ</h2></div>
-<p class="hint">ทดสอบจะค้นหาและเปิดรายละเอียด โดยไม่เปลี่ยนสถานะ</p><button id="dry" class="secondary" disabled>ทดสอบรายการ</button>
+<p class="hint">ทดสอบจะค้นหาชื่อและแสดงผล โดยไม่เปิดรายละเอียดหรือเปลี่ยนสถานะ</p><button id="dry" class="secondary" disabled>ทดสอบรายการ</button>
 <button id="deactivate" class="danger-outline" disabled>ปิดสิทธิ์ใช้งานรายการใน CMS…</button><button id="stop" class="secondary" hidden>หยุดหลังจบรายการปัจจุบัน</button>
 <p class="hint">ใช้บัญชี CMS ที่ตั้งค่าไว้ในเครื่อง เมื่อเริ่มงาน Chrome จะเปิดเพื่อดำเนินการ</p>
 </aside>
@@ -25,5 +25,5 @@
 <section class="card log-card"><div class="records-head"><h2>บันทึกการทำงาน</h2><span class="muted">อัปเดตอัตโนมัติ</span></div><pre id="logs" role="log" aria-label="บันทึกการทำงาน">ยังไม่มีการทำงาน</pre></section>
 </main>
 <dialog id="import-progress-dialog" aria-labelledby="import-progress-title"><p class="eyebrow">กำลังนำเข้าข้อมูล</p><h2 id="import-progress-title">กำลังอ่านไฟล์ Excel…</h2><p id="import-progress-detail">กรุณารอสักครู่</p><progress id="import-progress" max="100" value="0" aria-label="ความคืบหน้าการอ่านไฟล์"></progress></dialog>
-<dialog id="confirm"><form id="confirm-form"><p class="eyebrow">ยืนยันการปิดสิทธิ์ใช้งานจริง</p><h2>ปิดสิทธิ์ใช้งาน <span id="deactivate-count">0</span> รายการใน CMS?</h2><p>ระบบปลายทาง: <strong id="confirm-site"></strong></p><p>ตรวจรหัสในตารางให้ครบ การดำเนินการนี้จะเปลี่ยน Status เป็น Ex-Employee แล้วบันทึก</p><label>พิมพ์ DEACTIVATE เพื่อยืนยัน<input id="confirmation" autocomplete="off" required pattern="DEACTIVATE"></label><div class="dialog-actions"><button type="button" id="cancel" class="secondary">ยกเลิก</button><button type="submit" class="danger">ยืนยันปิดสิทธิ์ใช้งาน</button></div></form></dialog>
+<dialog id="confirm"><form id="confirm-form"><p class="eyebrow">ยืนยันการปิดสิทธิ์ใช้งานจริง</p><h2>ปิดสิทธิ์ใช้งาน <span id="deactivate-count">0</span> รายการที่พบข้อมูล?</h2><p>ระบบปลายทาง: <strong id="confirm-site"></strong></p><p>ระบบจะใช้ผล Dry Run ปัจจุบันและดำเนินการเฉพาะรายการที่แสดงว่า พบข้อมูล</p><label>พิมพ์ DEACTIVATE เพื่อยืนยัน<input id="confirmation" autocomplete="off" required pattern="DEACTIVATE"></label><div class="dialog-actions"><button type="button" id="cancel" class="secondary">ยกเลิก</button><button type="submit" class="danger">ยืนยันปิดสิทธิ์ใช้งาน</button></div></form></dialog>
 </body></html>

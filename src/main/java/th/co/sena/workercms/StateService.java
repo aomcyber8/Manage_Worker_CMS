@@ -3,7 +3,9 @@ package th.co.sena.workercms;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -45,13 +47,60 @@ public class StateService {
         phase = "ready"; records = List.copyOf(newRecords); results.clear(); logs.clear(); error = "";
         filename = source; site = cmsSite.name(); revision = UUID.randomUUID().toString();
     }
+
     public synchronized void begin(CmsSite cmsSite, String requestedMode, String requestedRevision) {
         if (active) throw new IllegalStateException("มีงานกำลังทำงาน กรุณารอให้จบก่อน");
         if (!site.equals(cmsSite.name())) throw new IllegalArgumentException("ระบบ CMS เปลี่ยนไป กรุณาอ่านไฟล์และตรวจรายการใหม่");
         if (records.isEmpty() || !revision.equals(requestedRevision)) throw new IllegalArgumentException("กรุณาอ่านไฟล์และตรวจรายการใหม่");
-        phase = "running"; active = true; mode = requestedMode; results.clear(); logs.clear(); error = "";
+
+        if ("deactivate".equals(requestedMode)) {
+            validateDryRunResults();
+            phase = "deactivating";
+            active = true;
+            mode = requestedMode;
+            logs.clear();
+            error = "";
+            return;
+        }
+
+        phase = "running";
+        active = true;
+        mode = requestedMode;
+        results.clear();
+        logs.clear();
+        error = "";
     }
-    public synchronized void addResult(WorkerResult result) { results.add(result); }
+
+    private void validateDryRunResults() {
+        if (!"dry-run".equals(mode) || !"done".equals(phase)) {
+            throw new IllegalArgumentException("กรุณาทดสอบรายการให้เสร็จครบก่อนปิดสิทธิ์ใช้งาน");
+        }
+        Set<Integer> recordRows = new HashSet<>();
+        records.forEach(record -> recordRows.add(record.row()));
+        Set<Integer> resultRows = new HashSet<>();
+        for (WorkerResult result : results) {
+            if (result.status() != WorkerStatus.SKIPPED && result.status() != WorkerStatus.NOT_FOUND) {
+                throw new IllegalArgumentException("ผลทดสอบรายการไม่สมบูรณ์ กรุณาทดสอบรายการใหม่");
+            }
+            resultRows.add(result.row());
+        }
+        if (results.size() != records.size() || !resultRows.equals(recordRows)) {
+            throw new IllegalArgumentException("กรุณาทดสอบรายการให้เสร็จครบก่อนปิดสิทธิ์ใช้งาน");
+        }
+        if (results.stream().noneMatch(result -> result.status() == WorkerStatus.SKIPPED)) {
+            throw new IllegalArgumentException("ไม่มีรายการที่พบข้อมูลสำหรับปิดสิทธิ์ใช้งาน");
+        }
+    }
+
+    public synchronized void addResult(WorkerResult result) {
+        for (int index = 0; index < results.size(); index++) {
+            if (results.get(index).row() == result.row()) {
+                results.set(index, result);
+                return;
+            }
+        }
+        results.add(result);
+    }
     public synchronized void log(String message) {
         logs.add(message); if (logs.size() > 400) logs.remove(0);
     }
