@@ -50,7 +50,7 @@ public class CliRunner {
                 long success = results.stream().filter(result -> result.status() == WorkerStatus.SUCCESS).count();
                 long skipped = results.stream().filter(result -> result.status() == WorkerStatus.SKIPPED).count();
                 long missing = results.stream().filter(result -> result.status() == WorkerStatus.NOT_FOUND).count();
-                log.accept("สรุป: ทั้งหมด " + results.size() + " | สำเร็จ " + success + " | ทดสอบผ่าน " + skipped + " | หาไม่พบ " + missing);
+                log.accept("สรุป: ทั้งหมด " + results.size() + " | สำเร็จ " + success + " | ทดสอบผ่าน " + skipped + " | ไม่พบ " + missing);
                 log.accept("Log file: " + logFile.toAbsolutePath());
             }
             return 0;

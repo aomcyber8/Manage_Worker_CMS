@@ -1,8 +1,10 @@
 const $ = (id) => document.getElementById(id);
 let state = {}, busy = false;
+const today = new Date();
+const localMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
 const siteLabels = {SENA:"SENA — sena.on.lk",SENX:"SENX — senx.on.lk"};
 const labels = {idle:'พร้อมใช้งาน',ready:'พร้อมตรวจสอบ',running:'กำลังทำงาน',finishing:'กำลังออกจากระบบ',done:'งานเสร็จแล้ว',stopped:'หยุดงานแล้ว',failed:'งานมีข้อผิดพลาด'};
-const searchResultLabels = {SUCCESS:'พบข้อมูล',SKIPPED:'พบข้อมูล',NOT_FOUND:'หาไม่พบ',FAILED:'ผิดพลาด'};
+const searchResultLabels = {SUCCESS:'พบข้อมูล',SKIPPED:'พบข้อมูล',NOT_FOUND:'ไม่พบ',FAILED:'ผิดพลาด'};
 function error(message) { $('error').textContent = message; $('error').hidden = !message; }
 async function api(path, data) {
   const response = await fetch(path, data ? {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state.token},body:JSON.stringify(data)} : {});
@@ -40,7 +42,7 @@ function render() {
   $('empty').hidden=records.length>0;
   $('dry').disabled=$('deactivate').disabled=busy || active || !records.length || !state.configured || !$('site').value || $('site').value!==state.site;
   $('export').disabled=busy || active || !records.length;
-  for(const id of ['preview','file','header-row','sheet','site']) $(id).disabled=busy || active;
+  for(const id of ['preview','file','header-row','sheet','site','resign-month','fetch-resign']) $(id).disabled=busy || active;
   $('stop').hidden=!active;
   const byRow=new Map(results.map(result=>[result.row,result]));
   const signature=JSON.stringify([records,results]);
@@ -74,7 +76,20 @@ function showImportProgress(title,detail,value) {
   else progress.value=value;
   if(!$('import-progress-dialog').open) $('import-progress-dialog').showModal();
 }
+$('resign-month').value=localMonth;
 $('site').addEventListener('change',()=>{render();if(state.records?.length && $('site').value!==state.site) error('เปลี่ยนระบบ CMS แล้ว กรุณาอ่านไฟล์และตรวจรายการใหม่');else error('');});
+$('fetch-resign').addEventListener('click',()=>action(async()=>{
+  const site=$('site').value, month=$('resign-month').value;
+  if(!site) throw new Error('กรุณาเลือกระบบ CMS');
+  if(!month) throw new Error('กรุณาระบุเดือนและปีที่ต้องการดึงข้อมูล');
+  showImportProgress('กำลังดึงข้อมูลจากเว็บ…','กำลังตรวจสอบตารางประวัติผู้ที่ลาออกแล้ว',null);
+  try {
+    const result=await api('/api/resign-history',{site,month});
+    showImportProgress('ดึงข้อมูลสำเร็จ',result.count.toLocaleString()+' รายการ',100);
+  } finally {
+    if($('import-progress-dialog').open) $('import-progress-dialog').close();
+  }
+}));
 $('upload').addEventListener('submit',event=>{event.preventDefault();action(async()=>{
   const file=$('file').files[0];
   if(!file || file.size>5*1024*1024) throw new Error('เลือกไฟล์ .xlsx ขนาดไม่เกิน 5 MB');

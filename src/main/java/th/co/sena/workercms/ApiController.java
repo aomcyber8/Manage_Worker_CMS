@@ -1,6 +1,8 @@
 package th.co.sena.workercms;
 
 import java.nio.charset.StandardCharsets;
+import java.time.YearMonth;
+import java.time.format.DateTimeParseException;
 import java.util.Base64;
 import java.util.Map;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -21,7 +23,10 @@ public class ApiController {
     private final StateService state;
     private final ExcelService excel;
     private final WorkflowService workflow;
-    public ApiController(StateService state, ExcelService excel, WorkflowService workflow) { this.state = state; this.excel = excel; this.workflow = workflow; }
+    private final ResignHistoryService resignHistory;
+    public ApiController(StateService state, ExcelService excel, WorkflowService workflow, ResignHistoryService resignHistory) {
+        this.state = state; this.excel = excel; this.workflow = workflow; this.resignHistory = resignHistory;
+    }
 
     @GetMapping("/state") public StateSnapshot state() { return state.snapshot(); }
 
@@ -35,6 +40,18 @@ public class ApiController {
         catch (Exception exception) { throw new IllegalArgumentException("ข้อมูลไฟล์ไม่ถูกต้อง"); }
         state.preview(site, request.filename(), excel.parse(raw, request.headerRow() == null ? 1 : request.headerRow(), request.sheet()));
         return Map.of("ok", true);
+    }
+
+    @PostMapping("/resign-history")
+    public Map<String, Object> resignHistory(@RequestBody ResignHistoryRequest request) {
+        if (state.active()) throw new IllegalStateException("มีงานกำลังทำงาน กรุณารอให้จบก่อน");
+        CmsSite site = CmsSite.parse(request.site());
+        YearMonth month;
+        try { month = YearMonth.parse(String.valueOf(request.month())); }
+        catch (DateTimeParseException exception) { throw new IllegalArgumentException("กรุณาระบุเดือนและปีให้ถูกต้อง"); }
+        var records = resignHistory.load(month);
+        state.preview(site, "resign-history-" + month + ".xlsx", records);
+        return Map.of("ok", true, "count", records.size());
     }
 
     @PostMapping("/start")
@@ -57,5 +74,6 @@ public class ApiController {
     }
 
     public record PreviewRequest(String site, String filename, String data, @JsonProperty("header_row") Integer headerRow, String sheet) {}
+    public record ResignHistoryRequest(String site, String month) {}
     public record StartRequest(String site, String mode, String revision, String confirmation) {}
 }

@@ -78,3 +78,17 @@ main {
     grid-template-columns: 1fr;
   }
 }
+
+.web-import {
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid #d5e4f1;
+  border-radius: 9px;
+  background: #f7faff;
+}
+
+.web-import label { margin-bottom: 10px; }
+.web-import button { margin-bottom: 4px; }
+.source-note { margin: 3px 0 0; text-align: center; font-size: 12px; color: #687b8e; }
+.import-separator { display: flex; align-items: center; gap: 10px; color: #7b8da0; font-size: 12px; margin: 2px 0 14px; }
+.import-separator::before, .import-separator::after { content: ''; flex: 1; border-top: 1px solid #dce4ed; }

@@ -20,11 +20,13 @@ class ApiControllerTest {
     private MockMvc mvc;
     private StateService state;
     private java.util.concurrent.ExecutorService executor;
+    private ResignHistoryService resignHistory;
     @BeforeEach void setup() {
         EnvConfig config = new EnvConfig(); state = new StateService(config); executor = Executors.newSingleThreadExecutor();
         ExcelService excel = new ExcelService(new NameService());
         WorkflowService workflow = new WorkflowService(state, Mockito.mock(CmsAutomation.class), config, executor);
-        mvc = MockMvcBuilders.standaloneSetup(new ApiController(state, excel, workflow))
+        resignHistory = Mockito.mock(ResignHistoryService.class);
+        mvc = MockMvcBuilders.standaloneSetup(new ApiController(state, excel, workflow, resignHistory))
             .setControllerAdvice(new ApiExceptionHandler()).addFilters(new LocalSecurityFilter(state)).build();
     }
     @AfterEach void close() { executor.shutdownNow(); }
@@ -50,6 +52,23 @@ class ApiControllerTest {
         mvc.perform(post("/api/export").header("Host", "127.0.0.1:80").header("X-CSRF-Token", state.token()).contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isOk()).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Type", org.hamcrest.Matchers.containsString("spreadsheetml")))
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Disposition", org.hamcrest.Matchers.containsString("workers_SENA_")));
+    }
+
+    @Test void importsResignHistoryForSelectedMonth() throws Exception {
+        var record = new WorkerRecord(1, "BK001", "สมชาย ใจดี", "01/08/2026", "BK001", "0001", "นายสมชาย ใจดี", "a@sena.co.th", "ผู้จัดการ", "ฝ่ายขาย");
+        Mockito.when(resignHistory.load(java.time.YearMonth.of(2026, 8))).thenReturn(java.util.List.of(record));
+        mvc.perform(post("/api/resign-history").header("Host", "127.0.0.1:80").header("X-CSRF-Token", state.token())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"site\":\"SENA\",\"month\":\"2026-08\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.count").value(1));
+        mvc.perform(get("/api/state").header("Host", "127.0.0.1:80"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.filename").value("resign-history-2026-08.xlsx"))
+            .andExpect(jsonPath("$.records[0].id").value("BK001"));
+    }
+
+    @Test void rejectsInvalidResignHistoryMonth() throws Exception {
+        mvc.perform(post("/api/resign-history").header("Host", "127.0.0.1:80").header("X-CSRF-Token", state.token())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"site\":\"SENA\",\"month\":\"08/2026\"}"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error").value("กรุณาระบุเดือนและปีให้ถูกต้อง"));
     }
 
     private byte[] validWorkbook() throws Exception {

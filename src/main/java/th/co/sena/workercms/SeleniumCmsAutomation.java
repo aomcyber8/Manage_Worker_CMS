@@ -11,12 +11,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.openqa.selenium.By;
 import org.openqa.selenium.ElementClickInterceptedException;
 import org.openqa.selenium.Keys;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.OutputType;
+import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.TimeoutException;
 import org.openqa.selenium.WebDriver;
@@ -31,16 +34,18 @@ public class SeleniumCmsAutomation implements CmsAutomation {
     static final By USERNAME = By.cssSelector("#txt_username");
     static final By PASSWORD = By.cssSelector("#txt_password");
     static final By LOGIN = By.cssSelector("#btn_login");
-    static final By SEARCH = By.cssSelector("input[type='search'], input[ng-model*='search'], input[ng-model*='Search'], input[placeholder*='Search'], input[placeholder*='search'], input.search-input, input[ng-model*='filter'], input[ng-model*='Filter']");
-    static final By ROWS = By.cssSelector("table tbody tr");
+    static final By EMPLOYEE_SEARCH_INPUTS = By.cssSelector("input[placeholder='Search'], input[placeholder='search']");
+    static final By SEARCH_BUTTON_WITHIN = By.xpath(".//*[self::button or self::a or @role='button'][contains(translate(@title,'SEARCH','search'),'search') or contains(translate(@aria-label,'SEARCH','search'),'search') or contains(concat(' ', normalize-space(@class), ' '), ' search ') or .//*[contains(concat(' ', normalize-space(@class), ' '), ' fa-search ') or contains(concat(' ', normalize-space(@class), ' '), ' glyphicon-search ') or contains(concat(' ', normalize-space(@class), ' '), ' icon-search ') or contains(concat(' ', normalize-space(@class), ' '), ' k-i-search ')]]");
+    static final By GRID_ROWS = By.cssSelector(".ngViewport .ngRow, .ng-viewport .ng-row, .ui-grid-viewport .ui-grid-row, .slick-viewport .slick-row, .k-grid-content tbody tr");
+    static final By HTML_TABLE_ROWS = By.xpath("//table[.//th[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'NAME')] and .//th[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'POSITION')] and .//th[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'USERNAME')]]//tbody/tr[td]");
+    static final By RESULT_CELLS = By.cssSelector("td, .ngCell, .ng-cell, .ui-grid-cell, .slick-cell");
+    static final By RESULT_LINKS = By.cssSelector("a");
     static final By STATUS = By.xpath("//*[normalize-space(text())='Employee' or normalize-space(text())='Ex-Employee']");
     static final By TOGGLE = By.cssSelector("input[type='checkbox'], [role='switch'], md-switch");
     static final By SAVE = By.xpath("//button[normalize-space(.)='Save' or normalize-space(.)='บันทึก' or @title='Save' or @aria-label='Save' or .//*[contains(concat(' ', normalize-space(@class), ' '), ' fa-save ')]] | //a[@title='Save' or @aria-label='Save' or .//*[contains(concat(' ', normalize-space(@class), ' '), ' fa-save ')]]");
     static final By SAVE_SUCCESS = By.xpath("//*[normalize-space(text())='SAVED' or normalize-space(text())='Saved' or normalize-space(text())='บันทึกสำเร็จ']");
-    static final List<By> SEARCH_BUTTONS = List.of(
-        By.xpath("//button[contains(text(),'Search')]"), By.cssSelector("button.search"),
-        By.xpath("//i[contains(@class,'fa-search')]/parent::button"), By.xpath("//button[contains(text(),'ค้นหา')]")
-    );
+    static final Pattern ACCESS_ID = Pattern.compile("Access\\s*Id\\s*[:：]\\s*(\\d+)", Pattern.CASE_INSENSITIVE);
+
     static final List<By> SESSION_BUTTONS = List.of(
         By.xpath("//button[contains(text(),'Yes')]"), By.xpath("//a[contains(text(),'Yes')]"),
         By.cssSelector(".nx-confirm-button-ok, .swal2-confirm, #NotiflixConfirmButtonOk")
@@ -77,9 +82,11 @@ public class SeleniumCmsAutomation implements CmsAutomation {
         private final CmsSite site;
         private final Consumer<String> log;
         private final Duration timeout = Duration.ofSeconds(config.getInt("WAIT_TIMEOUT", 10));
+        private final long searchSettleMillis = Math.max(300, config.getInt("SEARCH_SETTLE_MILLIS", 750));
         SeleniumSession(WebDriver driver, CmsSite site, Consumer<String> log) { this.driver = driver; this.site = site; this.log = log; }
 
-        private WebDriverWait waitNow() { return new WebDriverWait(driver, timeout, Duration.ofMillis(200)); }
+        private WebDriverWait waitNow() { return waitNow(timeout); }
+        private WebDriverWait waitNow(Duration duration) { return new WebDriverWait(driver, duration, Duration.ofMillis(200)); }
         private Optional<WebElement> firstNow(List<By> selectors, boolean clickable) {
             for (By by : selectors) for (WebElement element : driver.findElements(by)) {
                 if (!clickable || (element.isDisplayed() && element.isEnabled())) return Optional.of(element);
@@ -90,10 +97,104 @@ public class SeleniumCmsAutomation implements CmsAutomation {
             return waitNow().until(browser -> firstNow(selectors, clickable).orElse(null));
         }
         private WebElement waitAny(By selector, boolean clickable) { return waitAny(List.of(selector), clickable); }
+
+        private record SearchControl(WebElement input, WebElement button) { }
+        private record SearchMatch(WebElement row, WebElement nameCell) { }
+        private record SearchRead(List<WebElement> rows, List<SearchMatch> matches) { }
+
+        private List<SearchControl> employeeSearchControls() {
+            List<SearchControl> controls = new ArrayList<>();
+            for (WebElement input : driver.findElements(EMPLOYEE_SEARCH_INPUTS)) {
+                if (!input.isDisplayed() || !input.isEnabled()
+                    || !"Search".equalsIgnoreCase(Optional.ofNullable(input.getAttribute("placeholder")).orElse("").strip())) continue;
+
+                List<WebElement> geometric = adjacentButtons(input);
+                if (!geometric.isEmpty()) {
+                    controls.add(new SearchControl(input, geometric.getFirst()));
+                    continue;
+                }
+
+                WebElement container = input;
+                for (int level = 0; level < 4; level++) {
+                    if (level > 0) {
+                        try {
+                            WebElement parent = container.findElement(By.xpath(".."));
+                            if (parent == null) break;
+                            container = parent;
+                        } catch (RuntimeException exception) { break; }
+                    }
+                    List<WebElement> buttons = container.findElements(SEARCH_BUTTON_WITHIN).stream()
+                        .filter(element -> element.isDisplayed() && element.isEnabled()).toList();
+                    if (!buttons.isEmpty()) {
+                        for (WebElement button : buttons) controls.add(new SearchControl(input, button));
+                        break;
+                    }
+                }
+            }
+            return controls;
+        }
+
+        private List<WebElement> adjacentButtons(WebElement input) {
+            if (!(driver instanceof JavascriptExecutor javascript)) return List.of();
+            try {
+                Object result = javascript.executeScript("""
+                    const input = arguments[0], ir = input.getBoundingClientRect();
+                    const visible = element => {
+                      const r = element.getBoundingClientRect(), style = getComputedStyle(element);
+                      return r.width > 0 && r.height > 0 && style.display !== 'none'
+                        && style.visibility !== 'hidden' && !element.disabled;
+                    };
+                    const candidates = [...document.querySelectorAll(
+                      'button,a,[role="button"],input[type="button"],input[type="submit"],.input-group-addon'
+                    )].filter(element => {
+                      if (!visible(element) || element === input) return false;
+                      const r = element.getBoundingClientRect();
+                      const vertical = Math.abs((r.top + r.height / 2) - (ir.top + ir.height / 2));
+                      return vertical <= Math.max(12, ir.height * 0.65)
+                        && r.left >= ir.right - 8 && r.left <= ir.right + 110
+                        && r.width <= 120 && r.height <= Math.max(80, ir.height * 2);
+                    }).sort((a, b) => {
+                      const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+                      const as = Math.abs(ar.left - ir.right)
+                        + Math.abs((ar.top + ar.height / 2) - (ir.top + ir.height / 2));
+                      const bs = Math.abs(br.left - ir.right)
+                        + Math.abs((br.top + br.height / 2) - (ir.top + ir.height / 2));
+                      return as - bs;
+                    });
+                    return candidates.length ? [candidates[0]] : [];
+                    """, input);
+                if (!(result instanceof List<?> values)) return List.of();
+                return values.stream().filter(WebElement.class::isInstance)
+                    .map(WebElement.class::cast).filter(element -> element.isDisplayed() && element.isEnabled()).toList();
+            } catch (RuntimeException exception) {
+                return List.of();
+            }
+        }
+
+        private SearchControl waitEmployeeSearchControl() {
+            try {
+                return waitNow().until(browser -> {
+                    List<SearchControl> controls = employeeSearchControls();
+                    return controls.size() == 1 ? controls.getFirst() : null;
+                });
+            } catch (TimeoutException exception) {
+                int count = employeeSearchControls().size();
+                String message = count == 0
+                    ? "ไม่พบช่อง Employee Search ที่จับคู่กับปุ่มแว่นขยาย"
+                    : "พบชุดช่อง Employee Search และปุ่มแว่นขยายมากกว่าหนึ่งชุด (" + count + " ชุด)";
+                throw new IllegalStateException(message, exception);
+            }
+        }
+
         private void click(WebElement element) {
-            ((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", element);
+            if (driver instanceof JavascriptExecutor javascript) {
+                javascript.executeScript("arguments[0].scrollIntoView({block:'center'});", element);
+            }
             try { element.click(); }
-            catch (ElementClickInterceptedException exception) { ((JavascriptExecutor) driver).executeScript("arguments[0].click();", element); }
+            catch (ElementClickInterceptedException exception) {
+                if (driver instanceof JavascriptExecutor javascript) javascript.executeScript("arguments[0].click();", element);
+                else throw exception;
+            }
         }
 
         void login() {
@@ -104,34 +205,98 @@ public class SeleniumCmsAutomation implements CmsAutomation {
             click(waitAny(LOGIN, true));
             String event = waitNow().until(browser -> {
                 if (firstNow(SESSION_BUTTONS, true).isPresent()) return "session";
-                if (driver.findElements(USERNAME).isEmpty() && !driver.getCurrentUrl().toLowerCase().contains("login")) return "success";
+                if (loggedInPageReady()) return "success";
                 return null;
             });
             if ("session".equals(event)) {
                 log.accept("Session conflict popup detected - clicking Yes");
                 click(firstNow(SESSION_BUTTONS, true).orElseThrow());
-                waitNow().until(browser -> driver.findElements(USERNAME).isEmpty() && !driver.getCurrentUrl().toLowerCase().contains("login"));
+                waitNow().until(browser -> loggedInPageReady());
             }
             log.accept("Login OK - URL: " + driver.getCurrentUrl());
         }
 
         void openEmployeePage() {
-            log.accept("Step 2: Open Employee page — " + site.employeeUrl()); driver.get(site.employeeUrl());
-            URI current = URI.create(driver.getCurrentUrl()); URI expected = URI.create(site.employeeUrl());
-            String path = Optional.ofNullable(current.getPath()).orElse("").replaceFirst("/$", "");
-            if (!expected.getHost().equalsIgnoreCase(current.getHost())) throw new IllegalStateException("เปิดหน้า Employee ผิดระบบ CMS");
-            if (path.toLowerCase().contains("login")) throw new IllegalStateException("Session หมดอายุและถูกส่งกลับหน้า Login");
-            if (!path.equalsIgnoreCase(expected.getPath()) && !path.toLowerCase().startsWith(expected.getPath().toLowerCase() + "/")) {
-                throw new IllegalStateException("ระบบไม่ได้เปิดหน้า Employee ตาม URL ที่กำหนด");
+            log.accept("Step 2: Open Employee page — " + site.employeeUrl());
+            long firstAttemptMillis = Math.max(500, timeout.toMillis() / 3);
+            driver.get(site.employeeUrl());
+            try {
+                waitForEmployeeReady(Duration.ofMillis(firstAttemptMillis));
+            } catch (TimeoutException firstTimeout) {
+                validateCmsLocation();
+                log.accept("หน้า Employee ยังไม่พร้อม เปิด URL ซ้ำ — URL ปัจจุบัน: " + driver.getCurrentUrl());
+                driver.get(site.employeeUrl());
+                try {
+                    waitForEmployeeReady(Duration.ofMillis(Math.max(500, timeout.toMillis() - firstAttemptMillis)));
+                } catch (TimeoutException secondTimeout) {
+                    URI current = validateCmsLocation();
+                    if (isEmployeePath(current)) {
+                        int searchControlCount = employeeSearchControls().size();
+                        String reason = searchControlCount > 1
+                            ? "พบชุดช่อง Employee Search และปุ่มแว่นขยายมากกว่าหนึ่งชุด (" + searchControlCount + " ชุด)"
+                            : "ไม่พบช่อง Employee Search ที่จับคู่กับปุ่มแว่นขยาย";
+                        throw new IllegalStateException("เปิดหน้า Employee แล้วแต่" + reason + " — URL: " + driver.getCurrentUrl(), secondTimeout);
+                    }
+                    throw new IllegalStateException("ระบบไม่ได้เปิดหน้า Employee ตาม URL ที่กำหนด — URL ปัจจุบัน: " + driver.getCurrentUrl(), secondTimeout);
+                }
             }
-            waitAny(SEARCH, false); log.accept("Employee page ready: " + driver.getCurrentUrl());
+            log.accept("Employee page ready: " + driver.getCurrentUrl());
+        }
+
+        private boolean loggedInPageReady() {
+            String currentUrl = driver.getCurrentUrl();
+            if (!driver.findElements(USERNAME).isEmpty() || currentUrl == null || currentUrl.toLowerCase().contains("login")) return false;
+            Object readyState = ((JavascriptExecutor) driver).executeScript("return document.readyState");
+            return "complete".equals(readyState);
+        }
+
+        private void waitForEmployeeReady(Duration duration) {
+            waitNow(duration).until(browser -> {
+                URI current = validateCmsLocation();
+                return isEmployeePath(current) && employeeSearchControls().size() == 1;
+            });
+        }
+
+        private URI validateCmsLocation() {
+            rejectAccessDenied();
+            URI current;
+            try { current = URI.create(driver.getCurrentUrl()); }
+            catch (RuntimeException exception) { throw new IllegalStateException("CMS ส่ง URL ที่ไม่ถูกต้อง: " + driver.getCurrentUrl(), exception); }
+            URI expected = URI.create(site.employeeUrl());
+            if (!expected.getHost().equalsIgnoreCase(current.getHost())) {
+                throw new IllegalStateException("เปิดหน้า Employee ผิดระบบ CMS — URL ปัจจุบัน: " + driver.getCurrentUrl());
+            }
+            String path = Optional.ofNullable(current.getPath()).orElse("");
+            if (path.toLowerCase().contains("login")) {
+                throw new IllegalStateException("Session หมดอายุและถูกส่งกลับหน้า Login — URL: " + driver.getCurrentUrl());
+            }
+            return current;
+        }
+
+        private void rejectAccessDenied() {
+            String pageSource = Optional.ofNullable(driver.getPageSource()).orElse("");
+            if (!pageSource.contains("You are not authorized")
+                && !pageSource.contains("you are not authorized")
+                && !pageSource.contains("คุณไม่ได้รับอนุญาตให้เห็นหน้านี้")
+                && !pageSource.contains("Role is not defined")) return;
+            Matcher matcher = ACCESS_ID.matcher(pageSource.replaceAll("<[^>]+>", " "));
+            String accessId = matcher.find() ? " Access Id " + matcher.group(1) : "";
+            throw new IllegalStateException("บัญชี CMS ไม่มีสิทธิ์เปิดหน้า Employee (Role is not defined" + accessId
+                + ") กรุณาให้ผู้ดูแล CMS เพิ่มสิทธิ์แล้วลองใหม่");
+        }
+
+        private boolean isEmployeePath(URI current) {
+            String actualPath = Optional.ofNullable(current.getPath()).orElse("").replaceFirst("/$", "");
+            String expectedPath = URI.create(site.employeeUrl()).getPath().replaceFirst("/$", "");
+            return actualPath.equalsIgnoreCase(expectedPath)
+                || actualPath.toLowerCase().startsWith(expectedPath.toLowerCase() + "/");
         }
 
         @Override
         public WorkerResult process(WorkerRecord record, int index, int total, boolean dryRun) {
             log.accept("[" + index + "/" + total + "] Row " + record.row() + " | ID: " + record.id() + " | Search: " + record.searchName());
             try {
-                List<WebElement> matches = search(record.searchName(), record.searchName());
+                List<SearchMatch> matches = search(record.searchName(), record.searchName());
                 if (matches.size() > 1) throw new IllegalStateException("ต้องพบแถวที่มีชื่อตรงกับ '" + record.searchName() + "' เพียง 1 แถว (พบ " + matches.size() + " แถว)");
                 String surname = names.surname(record.searchName());
                 if (matches.isEmpty() && !surname.isBlank()) {
@@ -140,15 +305,28 @@ public class SeleniumCmsAutomation implements CmsAutomation {
                     if (matches.size() > 1) throw new IllegalStateException("ค้นหาด้วยนามสกุลแล้วพบชื่อ '" + record.searchName() + "' ซ้ำ " + matches.size() + " แถว");
                 }
                 if (matches.isEmpty()) {
-                    String message = surname.isBlank() ? "หาไม่พบ (ชื่อไม่มีนามสกุลสำหรับค้นหาซ้ำ)" : "หาไม่พบ (ค้นหาด้วยชื่อและนามสกุลแล้ว)";
+                    String message = surname.isBlank() ? "ไม่พบ (ชื่อไม่มีนามสกุลสำหรับค้นหาซ้ำ)" : "ไม่พบ (ค้นหาด้วยชื่อและนามสกุลแล้ว)";
                     log.accept(message); return result(record, WorkerStatus.NOT_FOUND, message);
                 }
-                List<WebElement> links = matches.getFirst().findElements(By.cssSelector("td a"));
-                click(links.isEmpty() ? matches.getFirst() : links.getFirst());
+                if (dryRun) {
+                    String message = "พบข้อมูล — ชื่อตรงหนึ่งรายการ";
+                    log.accept(message);
+                    return result(record, WorkerStatus.SKIPPED, message);
+                }
+                SearchMatch match = matches.getFirst();
+                List<WebElement> links = match.nameCell().findElements(RESULT_LINKS).stream()
+                    .filter(WebElement::isDisplayed)
+                    .filter(link -> names.key(link.getText()).equals(names.key(record.searchName())))
+                    .toList();
+                if (links.size() != 1) {
+                    throw new IllegalStateException("พบแถวชื่อ '" + record.searchName()
+                        + "' แต่ไม่พบลิงก์ชื่อที่ชัดเจนเพียงหนึ่งจุด (พบ " + links.size() + " จุด)");
+                }
+                click(links.getFirst());
                 waitStatus();
-                String message = deactivate(dryRun);
-                driver.navigate().back(); waitAny(SEARCH, false);
-                return result(record, dryRun ? WorkerStatus.SKIPPED : WorkerStatus.SUCCESS, message);
+                String message = deactivate();
+                driver.navigate().back(); waitEmployeeSearchControl();
+                return result(record, WorkerStatus.SUCCESS, message);
             } catch (Exception exception) {
                 String message = (exception instanceof TimeoutException ? "Timeout: " : "Error: ") + safeMessage(exception);
                 log.accept(message); screenshot(record.code()); recoverList();
@@ -156,23 +334,130 @@ public class SeleniumCmsAutomation implements CmsAutomation {
             }
         }
 
-        private List<WebElement> search(String term, String targetName) {
+        private List<SearchMatch> search(String term, String targetName) {
             List<String> previous = rowSignature(visibleRows());
-            WebElement input = waitAny(SEARCH, false); input.clear(); input.sendKeys(term);
-            Optional<WebElement> button = firstNow(SEARCH_BUTTONS, true);
-            if (button.isPresent()) click(button.get()); else input.sendKeys(Keys.RETURN);
-            log.accept("Search: " + term);
-            List<WebElement> refreshed = waitNow().until(browser -> {
-                List<WebElement> rows = visibleRows();
-                if (firstNow(NO_RESULTS, false).filter(WebElement::isDisplayed).isPresent()) return rows;
-                return rowSignature(rows).equals(previous) ? null : rows;
-            });
-            String key = names.key(targetName);
-            return refreshed.stream().filter(row -> row.findElements(By.cssSelector("td")).stream()
-                .anyMatch(cell -> names.key(cell.getText()).equals(key))).toList();
+            SearchControl control = waitEmployeeSearchControl();
+            WebElement input = control.input();
+            input.clear();
+            input.sendKeys(term);
+            log.accept("Employee Search control: " + describe(control.button()));
+            click(control.button());
+            log.accept("Employee Search: " + term + " (submit: ปุ่มแว่นขยาย)");
+
+            List<WebElement> refreshed;
+            long primaryMillis = Math.min(timeout.toMillis(), Math.max(2_000, searchSettleMillis * 2));
+            try {
+                refreshed = waitForSearchResult(previous, targetName, Duration.ofMillis(primaryMillis));
+            } catch (TimeoutException firstTimeout) {
+                refreshed = visibleRows();
+                if (previous.isEmpty() && refreshed.isEmpty()) {
+                    log.accept("Employee grid remained empty after " + primaryMillis + " ms");
+                } else {
+                    log.accept("ปุ่มแว่นขยายยังไม่ทำให้ตารางเปลี่ยน กำลังส่งคำค้นซ้ำด้วย Enter");
+                    click(input);
+                    input.clear();
+                    input.sendKeys(term);
+                    input.sendKeys(Keys.RETURN);
+                    long remainingMillis = Math.max(300, timeout.toMillis() - primaryMillis);
+                    try {
+                        refreshed = waitForSearchResult(previous, targetName, Duration.ofMillis(remainingMillis));
+                        log.accept("Employee Search: " + term + " (submit fallback: Enter)");
+                    } catch (TimeoutException secondTimeout) {
+                        refreshed = visibleRows();
+                        if (!previous.isEmpty() && rowSignature(refreshed).equals(previous)) {
+                            throw new IllegalStateException("ตารางผลค้นหาไม่อัปเดตหลังส่งทั้งปุ่มแว่นขยายและ Enter สำหรับ '"
+                                + term + "' ภายใน " + timeout.toSeconds() + " วินาที", secondTimeout);
+                        }
+                    }
+                }
+            }
+
+            SearchRead read = readSearchGrid(targetName);
+            refreshed = read.rows();
+            List<SearchMatch> matches = read.matches();
+            log.accept("Employee grid rows: " + refreshed.size());
+            if (refreshed.isEmpty()) {
+                log.accept("CMS ไม่คืนแถวผลลัพธ์สำหรับคำค้น: " + term);
+            } else if (matches.isEmpty()) {
+                String samples = refreshed.stream().map(this::safeNormalizedRowText).filter(text -> !text.isBlank())
+                    .limit(3).collect(Collectors.joining(" | "));
+                log.accept("CMS คืน " + refreshed.size() + " แถว แต่ไม่มีชื่อเต็มตรงกับ '" + targetName
+                    + "'" + (samples.isBlank() ? "" : " — ตัวอย่าง: " + samples));
+                screenshot("search_mismatch_" + term);
+            }
+            return matches;
         }
-        private List<WebElement> visibleRows() { return driver.findElements(ROWS).stream().filter(WebElement::isDisplayed).toList(); }
-        private List<String> rowSignature(List<WebElement> rows) { return rows.stream().map(row -> row.getText().strip().replaceAll("\\s+", " ")).toList(); }
+
+        private List<WebElement> waitForSearchResult(List<String> previous, String targetName, Duration duration) {
+            String targetKey = names.key(targetName);
+            long started = System.nanoTime();
+            return waitNow(duration).until(browser -> {
+                try {
+                    List<WebElement> rows = visibleRows();
+                    if (firstNow(NO_RESULTS, false).filter(WebElement::isDisplayed).isPresent()) return rows;
+                    List<String> current = rowSignature(rows);
+                    for (WebElement row : rows) {
+                        for (WebElement cell : resultCells(row)) {
+                            if (names.key(cell.getText()).equals(targetKey)) return rows;
+                        }
+                    }
+                    if (current.equals(previous)) return null;
+                    if (!rows.isEmpty()) return rows;
+                    long elapsedMillis = Duration.ofNanos(System.nanoTime() - started).toMillis();
+                    return elapsedMillis >= searchSettleMillis * 2 ? rows : null;
+                } catch (StaleElementReferenceException exception) {
+                    return null;
+                }
+            });
+        }
+
+        private SearchRead readSearchGrid(String targetName) {
+            String key = names.key(targetName);
+            Duration readTimeout = Duration.ofMillis(Math.max(500, Math.min(2_000, timeout.toMillis())));
+            return waitNow(readTimeout).until(browser -> {
+                try {
+                    List<WebElement> rows = visibleRows();
+                    List<SearchMatch> matches = new ArrayList<>();
+                    for (WebElement row : rows) {
+                        for (WebElement cell : resultCells(row)) {
+                            if (names.key(cell.getText()).equals(key)) {
+                                matches.add(new SearchMatch(row, cell));
+                                break;
+                            }
+                        }
+                    }
+                    return new SearchRead(rows, matches);
+                } catch (StaleElementReferenceException exception) {
+                    return null;
+                }
+            });
+        }
+
+        private String describe(WebElement element) {
+            String tag;
+            try { tag = element.getTagName(); } catch (RuntimeException exception) { tag = "?"; }
+            String css = Optional.ofNullable(element.getAttribute("class")).orElse("").strip().replaceAll("\\s+", ".");
+            String title = Optional.ofNullable(element.getAttribute("title")).orElse("").strip();
+            return "<" + tag + (css.isBlank() ? "" : " class=" + css) + (title.isBlank() ? "" : " title=" + title) + ">";
+        }
+
+        private List<WebElement> visibleRows() {
+            List<WebElement> rows = new ArrayList<>();
+            for (By selector : List.of(GRID_ROWS, HTML_TABLE_ROWS)) {
+                for (WebElement row : driver.findElements(selector)) {
+                    if (row.isDisplayed() && !resultCells(row).isEmpty() && !rows.contains(row)) rows.add(row);
+                }
+            }
+            return rows;
+        }
+        private List<WebElement> resultCells(WebElement row) {
+            return row.findElements(RESULT_CELLS).stream().filter(WebElement::isDisplayed).toList();
+        }
+        private String normalizedRowText(WebElement row) { return row.getText().strip().replaceAll("\\s+", " "); }
+        private String safeNormalizedRowText(WebElement row) {
+            try { return normalizedRowText(row); } catch (StaleElementReferenceException exception) { return ""; }
+        }
+        private List<String> rowSignature(List<WebElement> rows) { return rows.stream().map(this::normalizedRowText).toList(); }
 
         private WebElement waitStatus() {
             return waitNow().until(browser -> {
@@ -205,11 +490,10 @@ public class SeleniumCmsAutomation implements CmsAutomation {
             if (buttons.size() != 1) throw new IllegalStateException("ไม่พบปุ่มบันทึกหลักเพียงปุ่มเดียว กรุณาตรวจ selector ของ CMS");
             return buttons.getFirst();
         }
-        private String deactivate(boolean dryRun) {
+        private String deactivate() {
             String current = status().getText().strip();
-            if ("Ex-Employee".equals(current)) return dryRun ? "ทดสอบผ่าน — เป็น Ex-Employee อยู่แล้ว" : "เป็น Ex-Employee อยู่แล้ว";
+            if ("Ex-Employee".equals(current)) return "เป็น Ex-Employee อยู่แล้ว";
             WebElement toggle = toggle(); saveButton();
-            if (dryRun) return "ทดสอบผ่าน — พบสวิตช์ Status และปุ่มบันทึก (ยังไม่เปลี่ยนสถานะ)";
             String detailUrl = driver.getCurrentUrl(); click(toggle);
             waitNow().until(browser -> "Ex-Employee".equals(status().getText().strip()));
             click(saveButton()); waitNow().until(browser -> driver.findElements(SAVE_SUCCESS).stream().anyMatch(WebElement::isDisplayed));
@@ -221,8 +505,10 @@ public class SeleniumCmsAutomation implements CmsAutomation {
             return new WorkerResult(record.row(), record.code(), record.name(), record.searchName(), status, message);
         }
         private void recoverList() {
-            try { if (driver.findElements(SEARCH).isEmpty()) { driver.navigate().back(); waitAny(SEARCH, false); } }
-            catch (Exception ignored) { }
+            try {
+                if (employeeSearchControls().isEmpty()) driver.navigate().back();
+                waitEmployeeSearchControl();
+            } catch (Exception ignored) { }
         }
         private String safeMessage(Exception exception) {
             String message = Optional.ofNullable(exception.getMessage()).orElse(exception.getClass().getSimpleName());

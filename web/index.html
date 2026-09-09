@@ -8,7 +8,7 @@
 <div id="error" role="alert" hidden></div>
 <div class="workspace">
 <aside class="card"><div class="section-title"><span class="step">1</span><h2>เลือกระบบและนำเข้ารายการ</h2></div>
-<form id="upload"><label for="site">ระบบ CMS ที่ต้องการจัดการ<select id="site" required><option value="">— เลือกระบบ CMS —</option><option value="SENA">SENA — sena.on.lk</option><option value="SENX">SENX — senx.on.lk</option></select></label><label class="file-box" for="file"><strong>เลือกไฟล์ Excel</strong><span>.xlsx · ไม่เกิน 5 MB</span><input id="file" type="file" accept=".xlsx" required></label>
+<form id="upload"><label for="site">ระบบ CMS ที่ต้องการจัดการ<select id="site" required><option value="">— เลือกระบบ CMS —</option><option value="SENA">SENA — sena.on.lk</option><option value="SENX">SENX — senx.on.lk</option></select></label><div class="web-import"><label for="resign-month">เดือนที่ต้องการดึงข้อมูล<input id="resign-month" type="month" required></label><button class="primary" id="fetch-resign" type="button">ดึงข้อมูลจากเว็บ</button><p class="source-note">จากตาราง “ประวัติผู้ที่ลาออกแล้ว”</p></div><div class="import-separator"><span>หรือ</span></div><label class="file-box" for="file"><strong>เลือกไฟล์ Excel</strong><span>.xlsx · ไม่เกิน 5 MB</span><input id="file" type="file" accept=".xlsx"></label>
 <label>แถวหัวตาราง<input id="header-row" type="number" min="1" max="1048576" value="1" required></label>
 <label>ชื่อชีต <span class="muted">(เว้นว่างเพื่อใช้ชีตปัจจุบัน)</span><input id="sheet" placeholder="เช่น Sheet1"></label>
 <button class="primary" id="preview" type="submit">อ่านไฟล์และแสดงรายการ</button></form>
@@ -17,10 +17,10 @@
 <button id="deactivate" class="danger-outline" disabled>ปิดสิทธิ์ใช้งานรายการใน CMS…</button><button id="stop" class="secondary" hidden>หยุดหลังจบรายการปัจจุบัน</button>
 <p class="hint">ใช้บัญชี CMS ที่ตั้งค่าไว้ในเครื่อง เมื่อเริ่มงาน Chrome จะเปิดเพื่อดำเนินการ</p>
 </aside>
-<section class="card records"><div class="records-head"><div><h2>รายการจาก Excel</h2><p id="target-site" class="muted">ยังไม่ได้เลือกระบบ CMS</p><p id="filename" class="muted">ยังไม่ได้เลือกไฟล์</p></div><div class="records-actions"><strong id="count">0 รายการ</strong><button id="export" class="secondary export-button" type="button" disabled>Export Excel</button></div></div>
+<section class="card records"><div class="records-head"><div><h2>รายการ Worker</h2><p id="target-site" class="muted">ยังไม่ได้เลือกระบบ CMS</p><p id="filename" class="muted">ยังไม่ได้เลือกไฟล์</p></div><div class="records-actions"><strong id="count">0 รายการ</strong><button id="export" class="secondary export-button" type="button" disabled>Export Excel</button></div></div>
 <div class="stats"><div><span>ดำเนินการแล้ว</span><strong id="processed">0 / 0</strong></div><div><span>ปิดสิทธิ์ใช้งานสำเร็จ</span><strong id="success">0</strong></div><div><span>ทดสอบผ่าน</span><strong id="skipped">0</strong></div><div><span>ไม่สำเร็จ / ไม่พบ</span><strong id="failed">0</strong></div></div>
 <progress id="progress" max="1" value="0" aria-label="ความคืบหน้า"></progress>
-<div class="table-wrap"><table><thead><tr><th>วันที่พ้นสภาพ</th><th>ID</th><th>No</th><th>ชื่อ</th><th>E-mail</th><th>ตำแหน่ง</th><th>แผนก</th><th>ผลการค้นหา</th></tr></thead><tbody id="rows"></tbody></table><div id="empty"><span class="empty-symbol">≡</span><h3>เริ่มต้นด้วยไฟล์ Excel</h3><p>รายการ Worker จะแสดงที่นี่ก่อนเริ่มงาน<br>โปรแกรมตรวจสอบชื่อซ้ำก่อนดำเนินการ</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>วันที่พ้นสภาพ</th><th>ID</th><th>No</th><th>ชื่อ</th><th>E-mail</th><th>ตำแหน่ง</th><th>แผนก</th><th>ผลการค้นหา</th></tr></thead><tbody id="rows"></tbody></table><div id="empty"><span class="empty-symbol">≡</span><h3>เลือกดึงข้อมูลจากเว็บหรือไฟล์ Excel</h3><p>รายการ Worker จะแสดงที่นี่ก่อนเริ่มงาน<br>โปรแกรมตรวจสอบชื่อซ้ำก่อนดำเนินการ</p></div></div>
 </section></div>
 <section class="card log-card"><div class="records-head"><h2>บันทึกการทำงาน</h2><span class="muted">อัปเดตอัตโนมัติ</span></div><pre id="logs" role="log" aria-label="บันทึกการทำงาน">ยังไม่มีการทำงาน</pre></section>
 </main>
