@@ -47,7 +47,8 @@ public class SeleniumCmsAutomation implements CmsAutomation {
     static final By STATUS_SWITCH_LABELS = By.cssSelector("label.switch-label");
     static final By STATUS_ON = By.xpath(".//*[contains(concat(' ', normalize-space(@class), ' '), ' toggle--on ') and normalize-space(.)='Employee']");
     static final By STATUS_OFF = By.xpath(".//*[contains(concat(' ', normalize-space(@class), ' '), ' toggle--off ') and normalize-space(.)='Ex-Employee']");
-    static final By SAVE = By.xpath("//button[normalize-space(.)='Save' or normalize-space(.)='บันทึก' or @title='Save' or @aria-label='Save' or .//*[contains(concat(' ', normalize-space(@class), ' '), ' fa-save ')]] | //a[@title='Save' or @aria-label='Save' or .//*[contains(concat(' ', normalize-space(@class), ' '), ' fa-save ')]]");
+    static final By STATUS_INPUT_NEAR_LABEL = By.xpath("./preceding-sibling::input[contains(concat(' ', normalize-space(@class), ' '), ' switch-input ')][1] | .//input[contains(concat(' ', normalize-space(@class), ' '), ' switch-input ')]");
+    static final By SAVE = By.cssSelector("button, a, [role='button']");
     static final By SAVE_SUCCESS = By.xpath("//*[normalize-space(.)='Save Data Successful' or normalize-space(.)='บันทึกข้อมูลสำเร็จ']");
     static final By SAVE_SUCCESS_OK = By.xpath(".//*[self::button or self::a or @role='button'][normalize-space(.)='OK' or normalize-space(.)='ตกลง']");
     static final By EMPLOYEE_LIST_LINK = By.xpath("//a[@href='/Common/Employee' and (translate(normalize-space(@title),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='employee list' or @gotolist)]");
@@ -90,6 +91,7 @@ public class SeleniumCmsAutomation implements CmsAutomation {
         private final Consumer<String> log;
         private final Duration timeout = Duration.ofSeconds(config.getInt("WAIT_TIMEOUT", 10));
         private final long searchSettleMillis = Math.max(300, config.getInt("SEARCH_SETTLE_MILLIS", 750));
+        private final long statusSettleMillis = Math.max(0, config.getInt("STATUS_SETTLE_MILLIS", 1200));
         SeleniumSession(WebDriver driver, CmsSite site, Consumer<String> log) { this.driver = driver; this.site = site; this.log = log; }
 
         private WebDriverWait waitNow() { return waitNow(timeout); }
@@ -109,6 +111,10 @@ public class SeleniumCmsAutomation implements CmsAutomation {
         private record SearchMatch(WebElement row, WebElement nameCell) { }
         private record SearchRead(List<WebElement> rows, List<SearchMatch> matches) { }
         private record DetailWindow(String sourceHandle, String detailHandle) { }
+        private record StatusControl(WebElement input, WebElement label) { }
+        private final class CmsAccessDeniedException extends IllegalStateException {
+            CmsAccessDeniedException(String message) { super(message); }
+        }
 
         private List<SearchControl> employeeSearchControls() {
             List<SearchControl> controls = new ArrayList<>();
@@ -226,8 +232,24 @@ public class SeleniumCmsAutomation implements CmsAutomation {
 
         void openEmployeePage() {
             log.accept("Step 2: Open Employee page — " + site.employeeUrl());
-            long firstAttemptMillis = Math.max(500, timeout.toMillis() / 3);
             driver.get(site.employeeUrl());
+            int maxAccessAttempts = Math.max(1, config.getInt("ACCESS_RETRY_COUNT", 3));
+            for (int attempt = 1; attempt <= maxAccessAttempts; attempt++) {
+                try {
+                    awaitEmployeePage();
+                    log.accept("Employee page ready: " + driver.getCurrentUrl());
+                    return;
+                } catch (CmsAccessDeniedException denied) {
+                    if (attempt >= maxAccessAttempts) throw denied;
+                    log.accept("CMS ตรวจสิทธิ์หน้า Employee ไม่ผ่านชั่วคราว โหลดหน้าเดิมซ้ำ (ครั้งที่ "
+                        + (attempt + 1) + "/" + maxAccessAttempts + ")");
+                    driver.get(site.employeeUrl());
+                }
+            }
+        }
+
+        private void awaitEmployeePage() {
+            long firstAttemptMillis = Math.max(500, timeout.toMillis() / 3);
             try {
                 waitForEmployeeReady(Duration.ofMillis(firstAttemptMillis));
             } catch (TimeoutException firstTimeout) {
@@ -248,7 +270,6 @@ public class SeleniumCmsAutomation implements CmsAutomation {
                     throw new IllegalStateException("ระบบไม่ได้เปิดหน้า Employee ตาม URL ที่กำหนด — URL ปัจจุบัน: " + driver.getCurrentUrl(), secondTimeout);
                 }
             }
-            log.accept("Employee page ready: " + driver.getCurrentUrl());
         }
 
         private boolean loggedInPageReady() {
@@ -289,7 +310,7 @@ public class SeleniumCmsAutomation implements CmsAutomation {
                 && !pageSource.contains("Role is not defined")) return;
             Matcher matcher = ACCESS_ID.matcher(pageSource.replaceAll("<[^>]+>", " "));
             String accessId = matcher.find() ? " Access Id " + matcher.group(1) : "";
-            throw new IllegalStateException("บัญชี CMS ไม่มีสิทธิ์เปิดหน้า Employee (Role is not defined" + accessId
+            throw new CmsAccessDeniedException("บัญชี CMS ไม่มีสิทธิ์เปิดหน้า Employee (Role is not defined" + accessId
                 + ") กรุณาให้ผู้ดูแล CMS เพิ่มสิทธิ์แล้วลองใหม่");
         }
 
@@ -483,7 +504,7 @@ public class SeleniumCmsAutomation implements CmsAutomation {
             });
             if (!detailHandle.equals(driver.getWindowHandle())) driver.switchTo().window(detailHandle);
             waitForEmployeeDetail();
-            waitStatusSwitch();
+            waitStatusControl();
             log.accept("Employee detail ready: " + driver.getCurrentUrl());
             return new DetailWindow(sourceHandle, detailHandle);
         }
@@ -520,65 +541,138 @@ public class SeleniumCmsAutomation implements CmsAutomation {
             }
         }
 
-        private WebElement waitStatusSwitch() {
+                private StatusControl waitStatusControl() {
             try {
                 return waitNow().until(browser -> {
-                    List<WebElement> labels = statusSwitches();
-                    if (labels.size() > 1) {
+                    List<StatusControl> controls = statusControls();
+                    if (controls.size() > 1) {
                         throw new IllegalStateException("พบสวิตช์ Status Employee / Ex-Employee มากกว่าหนึ่งจุด ("
-                            + labels.size() + " จุด)");
+                            + controls.size() + " จุด)");
                     }
-                    return labels.size() == 1 ? labels.getFirst() : null;
+                    return controls.size() == 1 ? controls.getFirst() : null;
                 });
             } catch (TimeoutException exception) {
-                int count = statusSwitches().size();
+                int count = statusControls().size();
                 throw new IllegalStateException(count == 0
-                    ? "ไม่พบสวิตช์ Status Employee / Ex-Employee ในหน้า Employee Detail"
+                    ? "ไม่พบ input.switch-input ที่ผูกกับ Status Employee / Ex-Employee ในหน้า Employee Detail"
                     : "พบสวิตช์ Status Employee / Ex-Employee มากกว่าหนึ่งจุด (" + count + " จุด)", exception);
             }
         }
 
-        private List<WebElement> statusSwitches() {
+        private List<WebElement> statusLabels() {
             return driver.findElements(STATUS_SWITCH_LABELS).stream()
                 .filter(WebElement::isDisplayed)
                 .filter(label -> label.findElements(STATUS_ON).size() == 1 && label.findElements(STATUS_OFF).size() == 1)
                 .toList();
         }
 
-        private String statusValue() {
-            WebElement label = waitStatusSwitch();
-            WebElement on = label.findElements(STATUS_ON).getFirst();
-            WebElement off = label.findElements(STATUS_OFF).getFirst();
-            boolean employeeVisible = on.isDisplayed();
-            boolean exEmployeeVisible = off.isDisplayed();
-            if (employeeVisible == exEmployeeVisible) {
-                throw new IllegalStateException("ไม่สามารถระบุค่า Status จากสวิตช์ Employee / Ex-Employee ได้");
+        private List<StatusControl> statusControls() {
+            List<StatusControl> controls = new ArrayList<>();
+            for (WebElement label : statusLabels()) {
+                List<WebElement> inputs = new ArrayList<>();
+                String forId = Optional.ofNullable(label.getAttribute("for")).orElse("").strip();
+                if (!forId.isBlank()) {
+                    driver.findElements(By.id(forId)).stream()
+                        .filter(this::isSwitchInput)
+                        .forEach(inputs::add);
+                }
+                label.findElements(STATUS_INPUT_NEAR_LABEL).stream()
+                    .filter(this::isSwitchInput)
+                    .forEach(inputs::add);
+                inputs.stream().distinct().forEach(input -> controls.add(new StatusControl(input, label)));
             }
-            return employeeVisible ? "Employee" : "Ex-Employee";
+            return controls.stream().distinct().toList();
         }
 
-        private WebElement statusToggle() {
-            WebElement label = waitStatusSwitch();
-            if (!label.isEnabled()) throw new IllegalStateException("สวิตช์ Status ไม่พร้อมใช้งาน");
-            return label;
+        private boolean isSwitchInput(WebElement element) {
+            String css = Optional.ofNullable(element.getAttribute("class")).orElse("");
+            return List.of(css.split("\s+")).contains("switch-input");
         }
 
-        private WebElement saveButton() {
-            List<WebElement> buttons = driver.findElements(SAVE).stream().filter(e -> e.isDisplayed() && e.isEnabled()).toList();
-            if (buttons.size() != 1) throw new IllegalStateException("ไม่พบปุ่มบันทึกหลักเพียงปุ่มเดียว กรุณาตรวจ selector ของ CMS");
+        private String statusValue() {
+            return waitStatusControl().input().isSelected() ? "Employee" : "Ex-Employee";
+        }
+
+        private String settledStatusValue() {
+            long readyAt = System.nanoTime() + Duration.ofMillis(statusSettleMillis).toNanos();
+            return waitNow().until(browser -> System.nanoTime() < readyAt ? null : statusValue());
+        }
+
+        private StatusControl statusToggle() {
+            StatusControl control = waitStatusControl();
+            if (!control.input().isEnabled() || !control.label().isEnabled()) {
+                throw new IllegalStateException("สวิตช์ Status ไม่พร้อมใช้งาน");
+            }
+            return control;
+        }
+
+        private boolean exEmployeeTextVisible(StatusControl control) {
+            String visibleText = Optional.ofNullable(control.label().getText()).orElse("").strip().replaceAll("\s+", " ");
+            return "Ex-Employee".equals(visibleText)
+                || control.label().findElements(STATUS_OFF).stream().anyMatch(WebElement::isDisplayed);
+        }
+private WebElement saveButton() {
+            URI current = URI.create(driver.getCurrentUrl());
+            if (!isEmployeeDetailPath(current)) {
+                throw new IllegalStateException("ไม่สามารถค้นหาปุ่ม Save Document นอกหน้า Employee Detail — URL: "
+                    + driver.getCurrentUrl());
+            }
+            List<WebElement> controls = driver.findElements(SAVE).stream()
+                .filter(WebElement::isDisplayed)
+                .filter(WebElement::isEnabled)
+                .toList();
+            List<WebElement> buttons = controls.stream().filter(this::isSaveDocument).distinct().toList();
+            if (buttons.size() != 1) {
+                String candidates = controls.stream().filter(this::looksLikeSaveControl).limit(8)
+                    .map(this::describeSaveControl).collect(Collectors.joining(", "));
+                throw new IllegalStateException("ต้องพบปุ่ม Save Document ที่ระบุได้แน่นอนเพียงหนึ่งปุ่ม (พบ "
+                    + buttons.size() + " ปุ่ม)" + (candidates.isBlank() ? "" : " — controls: " + candidates));
+            }
             return buttons.getFirst();
         }
 
+        private boolean isSaveDocument(WebElement element) {
+            return List.of("title", "aria-label", "data-original-title").stream()
+                .map(attribute -> Optional.ofNullable(element.getAttribute(attribute)).orElse("").strip())
+                .anyMatch("Save Document"::equalsIgnoreCase);
+        }
+
+        private boolean looksLikeSaveControl(WebElement element) {
+            return List.of("title", "aria-label", "data-original-title", "class").stream()
+                .map(attribute -> Optional.ofNullable(element.getAttribute(attribute)).orElse("").toLowerCase())
+                .anyMatch(value -> value.contains("save"));
+        }
+
+        private String describeSaveControl(WebElement element) {
+            String tag = Optional.ofNullable(element.getTagName()).orElse("?");
+            return "<" + tag + " class='" + Optional.ofNullable(element.getAttribute("class")).orElse("")
+                + "' title='" + Optional.ofNullable(element.getAttribute("title")).orElse("")
+                + "' aria-label='" + Optional.ofNullable(element.getAttribute("aria-label")).orElse("")
+                + "' data-original-title='" + Optional.ofNullable(element.getAttribute("data-original-title")).orElse("")
+                + "'>";
+        }
+
         private String deactivate() {
-            String current = statusValue();
+            String current = settledStatusValue();
+            log.accept("Status after Employee Detail settled: " + current);
             if ("Ex-Employee".equals(current)) {
                 log.accept("Status เป็น Ex-Employee อยู่แล้ว");
                 return "Ex-Employee — เป็นสถานะนี้อยู่แล้ว";
             }
-            WebElement toggle = statusToggle();
+            StatusControl toggle = statusToggle();
             saveButton();
-            click(toggle);
-            waitNow().until(browser -> "Ex-Employee".equals(statusValue()));
+            click(toggle.label());
+            waitNow().until(browser -> {
+                List<StatusControl> controls = statusControls();
+                if (controls.size() > 1) {
+                    throw new IllegalStateException("พบสวิตช์ Status Employee / Ex-Employee มากกว่าหนึ่งจุด ("
+                        + controls.size() + " จุด)");
+                }
+                if (controls.size() != 1) return null;
+                StatusControl updated = controls.getFirst();
+                return !updated.input().isSelected() && exEmployeeTextVisible(updated) ? true : null;
+            });
+            log.accept("Status changed: .switch-input:checked → unchecked (Ex-Employee)");
             click(saveButton());
             closeSaveSuccess();
             log.accept("Save Data Successful — ปิดหน้าต่างด้วย OK แล้ว");

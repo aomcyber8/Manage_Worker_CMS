@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import java.util.LinkedHashSet;
@@ -26,7 +27,7 @@ import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
 
 class SeleniumCmsAutomationTest {
-    private final EnvConfig config = new EnvConfig(Map.of("WAIT_TIMEOUT", "1"));
+    private final EnvConfig config = new EnvConfig(Map.of("WAIT_TIMEOUT", "1", "STATUS_SETTLE_MILLIS", "0"));
     private final NameService names = new NameService();
 
     @Test
@@ -48,6 +49,28 @@ class SeleniumCmsAutomationTest {
 
         assertTrue(error.getMessage().contains("ไม่มีสิทธิ์"));
         assertTrue(error.getMessage().contains("Access Id 89"));
+        verify(driver, times(3)).get("https://sena.on.lk/Common/Employee");
+    }
+
+    @Test
+    void reloadsTransientAccessDeniedPageAndContinuesWhenEmployeePageBecomesReady() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        WebElement search = mock(WebElement.class), parent = mock(WebElement.class), button = mock(WebElement.class);
+        pairSearch(search, parent, button);
+        when(driver.getCurrentUrl()).thenReturn(
+            "https://sena.on.lk/Error/AccessDenied",
+            "https://sena.on.lk/Common/Employee",
+            "https://sena.on.lk/Common/Employee"
+        );
+        when(driver.getPageSource()).thenReturn(
+            "You are not authorized to view this page. Role is not defined. Access Id : 89",
+            ""
+        );
+        when(driver.findElements(SeleniumCmsAutomation.EMPLOYEE_SEARCH_INPUTS)).thenReturn(List.of(search));
+
+        session(driver).openEmployeePage();
+
+        verify(driver, times(2)).get("https://sena.on.lk/Common/Employee");
     }
 
     @Test
@@ -128,6 +151,100 @@ class SeleniumCmsAutomationTest {
     }
 
     @Test
+    void checkedSwitchInputTakesPrecedenceOverMisleadingToggleText() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        DetailScenario page = detailScenario(driver, false, true);
+        when(page.statusLabel().getText()).thenAnswer(invocation -> page.exEmployee().get() ? "Ex-Employee" : "Employee");
+        when(page.on().isDisplayed()).thenReturn(false);
+        when(page.off().isDisplayed()).thenReturn(true);
+        domSaveSuccess(driver);
+
+        WorkerResult result = session(driver).process(worker(), 1, 1, false);
+
+        assertEquals(WorkerStatus.SUCCESS, result.status());
+        verify(page.statusLabel()).click();
+        verify(page.save()).click();
+    }
+    @Test
+    void statusInputCanBeLinkedThroughLabelForAndInputId() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        DetailScenario page = detailScenario(driver, false, true);
+        when(page.statusLabel().findElements(SeleniumCmsAutomation.STATUS_INPUT_NEAR_LABEL)).thenReturn(List.of());
+        when(page.statusLabel().getAttribute("for")).thenReturn("employee-status");
+        when(driver.findElements(By.id("employee-status"))).thenReturn(List.of(page.statusInput()));
+        domSaveSuccess(driver);
+
+        WorkerResult result = session(driver).process(worker(), 1, 1, false);
+
+        assertEquals(WorkerStatus.SUCCESS, result.status());
+        verify(page.statusLabel()).click();
+        verify(page.save()).click();
+    }
+
+    @Test
+    void ignoresOtherSwitchInputsOnEmployeeDetail() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        DetailScenario page = detailScenario(driver, false, true);
+        WebElement emailLabel = mock(WebElement.class);
+        when(emailLabel.isDisplayed()).thenReturn(true);
+        when(driver.findElements(SeleniumCmsAutomation.STATUS_SWITCH_LABELS))
+            .thenReturn(List.of(emailLabel, page.statusLabel()));
+        domSaveSuccess(driver);
+
+        WorkerResult result = session(driver).process(worker(), 1, 1, false);
+
+        assertEquals(WorkerStatus.SUCCESS, result.status());
+        verify(emailLabel, never()).click();
+        verify(page.statusLabel()).click();
+    }
+    @Test
+    void saveDocumentCanBeIdentifiedByAriaLabel() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        DetailScenario page = detailScenario(driver, false, true);
+        when(page.save().getAttribute("title")).thenReturn("");
+        when(page.save().getAttribute("aria-label")).thenReturn("Save Document");
+        domSaveSuccess(driver);
+
+        WorkerResult result = session(driver).process(worker(), 1, 1, false);
+
+        assertEquals(WorkerStatus.SUCCESS, result.status());
+        verify(page.save()).click();
+    }
+
+    @Test
+    void saveDocumentCanBeIdentifiedByOriginalTitle() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        DetailScenario page = detailScenario(driver, false, true);
+        when(page.save().getAttribute("title")).thenReturn("");
+        when(page.save().getAttribute("data-original-title")).thenReturn("Save Document");
+        domSaveSuccess(driver);
+
+        WorkerResult result = session(driver).process(worker(), 1, 1, false);
+
+        assertEquals(WorkerStatus.SUCCESS, result.status());
+        verify(page.save()).click();
+    }
+
+    @Test
+    void ignoresSavedBannerAndOtherToolbarControls() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        DetailScenario page = detailScenario(driver, false, true);
+        WebElement saved = mock(WebElement.class), print = mock(WebElement.class);
+        when(saved.isDisplayed()).thenReturn(true); when(saved.isEnabled()).thenReturn(true);
+        when(saved.getAttribute("title")).thenReturn("SAVED");
+        when(print.isDisplayed()).thenReturn(true); when(print.isEnabled()).thenReturn(true);
+        when(print.getAttribute("title")).thenReturn("Print Document");
+        when(driver.findElements(SeleniumCmsAutomation.SAVE)).thenReturn(List.of(saved, print, page.save()));
+        domSaveSuccess(driver);
+
+        WorkerResult result = session(driver).process(worker(), 1, 1, false);
+
+        assertEquals(WorkerStatus.SUCCESS, result.status());
+        verify(page.save()).click();
+        verify(saved, never()).click();
+        verify(print, never()).click();
+    }
+    @Test
     void employeeBreadcrumbDoesNotCountAsStatusSwitch() {
         ChromeDriver driver = mock(ChromeDriver.class);
         DetailScenario page = detailScenario(driver, true, true);
@@ -173,6 +290,37 @@ class SeleniumCmsAutomationTest {
     }
 
     @Test
+    void missingSaveDocumentFailsBeforeChangingStatus() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        DetailScenario page = detailScenario(driver, false, true);
+        when(driver.findElements(SeleniumCmsAutomation.SAVE)).thenReturn(List.of());
+
+        WorkerResult result = session(driver).process(worker(), 1, 1, false);
+
+        assertEquals(WorkerStatus.FAILED, result.status());
+        assertTrue(result.message().contains("Save Document"));
+        verify(page.statusLabel(), never()).click();
+    }
+
+    @Test
+    void ambiguousSaveDocumentFailsBeforeChangingStatus() {
+        ChromeDriver driver = mock(ChromeDriver.class);
+        DetailScenario page = detailScenario(driver, false, true);
+        WebElement anotherSave = mock(WebElement.class);
+        when(anotherSave.isDisplayed()).thenReturn(true);
+        when(anotherSave.isEnabled()).thenReturn(true);
+        when(anotherSave.getAttribute("title")).thenReturn("Save Document");
+        when(driver.findElements(SeleniumCmsAutomation.SAVE)).thenReturn(List.of(page.save(), anotherSave));
+
+        WorkerResult result = session(driver).process(worker(), 1, 1, false);
+
+        assertEquals(WorkerStatus.FAILED, result.status());
+        assertTrue(result.message().contains("พบ 2 ปุ่ม"));
+        verify(page.statusLabel(), never()).click();
+        verify(page.save(), never()).click();
+        verify(anotherSave, never()).click();
+    }
+    @Test
     void missingSaveSuccessPopupFailsTheWorker() {
         ChromeDriver driver = mock(ChromeDriver.class);
         DetailScenario page = detailScenario(driver, false, true);
@@ -201,8 +349,15 @@ class SeleniumCmsAutomationTest {
     void ambiguousStatusSwitchFailsTheWorker() {
         ChromeDriver driver = mock(ChromeDriver.class);
         DetailScenario page = detailScenario(driver, true, true);
+        WebElement secondLabel = mock(WebElement.class), secondInput = mock(WebElement.class);
+        WebElement secondOn = mock(WebElement.class), secondOff = mock(WebElement.class);
+        when(secondLabel.isDisplayed()).thenReturn(true);
+        when(secondLabel.findElements(SeleniumCmsAutomation.STATUS_ON)).thenReturn(List.of(secondOn));
+        when(secondLabel.findElements(SeleniumCmsAutomation.STATUS_OFF)).thenReturn(List.of(secondOff));
+        when(secondLabel.findElements(SeleniumCmsAutomation.STATUS_INPUT_NEAR_LABEL)).thenReturn(List.of(secondInput));
+        when(secondInput.getAttribute("class")).thenReturn("switch-input");
         when(driver.findElements(SeleniumCmsAutomation.STATUS_SWITCH_LABELS))
-            .thenReturn(List.of(page.statusLabel(), page.statusLabel()));
+            .thenReturn(List.of(page.statusLabel(), secondLabel));
 
         WorkerResult result = session(driver).process(worker(), 1, 1, false);
 
@@ -326,7 +481,7 @@ class SeleniumCmsAutomationTest {
     private DetailScenario detailScenario(ChromeDriver driver, boolean alreadyExEmployee, boolean newTab) {
         WebElement input = mock(WebElement.class), parent = mock(WebElement.class), searchButton = mock(WebElement.class);
         WebElement row = mock(WebElement.class), cell = mock(WebElement.class), nameLink = mock(WebElement.class);
-        WebElement statusLabel = mock(WebElement.class), on = mock(WebElement.class), off = mock(WebElement.class);
+        WebElement statusLabel = mock(WebElement.class), statusInput = mock(WebElement.class), on = mock(WebElement.class), off = mock(WebElement.class);
         WebElement save = mock(WebElement.class), employeeList = mock(WebElement.class);
         AtomicBoolean opened = new AtomicBoolean();
         AtomicBoolean sourceOpen = new AtomicBoolean(true);
@@ -375,6 +530,11 @@ class SeleniumCmsAutomationTest {
         when(statusLabel.isEnabled()).thenReturn(true);
         when(statusLabel.findElements(SeleniumCmsAutomation.STATUS_ON)).thenReturn(List.of(on));
         when(statusLabel.findElements(SeleniumCmsAutomation.STATUS_OFF)).thenReturn(List.of(off));
+        when(statusLabel.findElements(SeleniumCmsAutomation.STATUS_INPUT_NEAR_LABEL)).thenReturn(List.of(statusInput));
+        when(statusLabel.getText()).thenAnswer(invocation -> exEmployee.get() ? "Ex-Employee" : "Employee");
+        when(statusInput.getAttribute("class")).thenReturn("switch-input");
+        when(statusInput.isEnabled()).thenReturn(true);
+        when(statusInput.isSelected()).thenAnswer(invocation -> !exEmployee.get());
         when(on.isDisplayed()).thenAnswer(invocation -> !exEmployee.get());
         when(off.isDisplayed()).thenAnswer(invocation -> exEmployee.get());
         doAnswer(invocation -> { exEmployee.set(true); return null; }).when(statusLabel).click();
@@ -382,12 +542,14 @@ class SeleniumCmsAutomationTest {
         when(driver.findElements(SeleniumCmsAutomation.SAVE)).thenReturn(List.of(save));
         when(save.isDisplayed()).thenReturn(true);
         when(save.isEnabled()).thenReturn(true);
+        when(save.getTagName()).thenReturn("a");
+        when(save.getAttribute("title")).thenReturn("Save Document");
         when(driver.findElements(SeleniumCmsAutomation.EMPLOYEE_LIST_LINK)).thenReturn(List.of(employeeList));
         when(employeeList.isDisplayed()).thenReturn(true);
         when(employeeList.isEnabled()).thenReturn(true);
         doAnswer(invocation -> { detailAtList.set(true); return null; }).when(employeeList).click();
 
-        return new DetailScenario(nameLink, statusLabel, save, employeeList, sourceOpen, currentHandle, alert);
+        return new DetailScenario(nameLink, statusLabel, statusInput, on, off, save, employeeList, sourceOpen, currentHandle, alert, exEmployee);
     }
 
     private void pairSearch(WebElement input, WebElement parent, WebElement button) {
@@ -404,10 +566,14 @@ class SeleniumCmsAutomationTest {
     private record DetailScenario(
         WebElement nameLink,
         WebElement statusLabel,
+        WebElement statusInput,
+        WebElement on,
+        WebElement off,
         WebElement save,
         WebElement employeeList,
         AtomicBoolean sourceOpen,
         AtomicReference<String> currentHandle,
-        AtomicReference<Alert> alert
+        AtomicReference<Alert> alert,
+        AtomicBoolean exEmployee
     ) {}
 }
