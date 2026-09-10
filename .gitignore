@@ -1,9 +1,14 @@
 # Environment & Secrets
 .env
 
-# Java / Maven
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
 target/
-*.class
 
 # Logs
 logs/

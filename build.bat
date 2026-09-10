@@ -1,9 +1,14 @@
 @echo off
 setlocal
-set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot"
-set "MAVEN_CMD=%LOCALAPPDATA%\Programs\Apache Maven\apache-maven-3.9.16\bin\mvn.cmd"
-if not exist "%MAVEN_CMD%" set "MAVEN_CMD=mvn"
-call "%MAVEN_CMD%" package
+chcp 65001 >nul
+set PYTHONUTF8=1
+set "PYTHON_EXE=C:\Python314\python.exe"
+if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
+if not exist ".venv\Scripts\python.exe" "%PYTHON_EXE%" -m venv .venv
+if errorlevel 1 exit /b %errorlevel%
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+if errorlevel 1 exit /b %errorlevel%
+".venv\Scripts\python.exe" -m pytest
 if errorlevel 1 exit /b %errorlevel%
 echo.
-echo Build complete: target\worker-cms-1.0.0.jar
+echo Build complete: Python virtual environment and tests are ready.
