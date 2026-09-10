@@ -6,7 +6,7 @@ import pytest
 
 from worker_cms.models import CmsSite, WorkerStatus
 from worker_cms.selenium_cms import (
-    SAVE, STATUS_INPUT_NEAR_LABEL, STATUS_OFF, STATUS_ON, STATUS_SWITCH_LABELS,
+    SAVE, SAVE_CONFIRM, SAVE_CONFIRM_YES, STATUS_INPUT_NEAR_LABEL, STATUS_OFF, STATUS_ON, STATUS_SWITCH_LABELS,
     CmsAccessDeniedError, SearchMatch, SeleniumSession,
 )
 
@@ -108,9 +108,9 @@ def test_name_then_surname_not_found(configured,record,mocker):
 def test_deactivate_checked_switch_saves_after_unchecked(configured,mocker):
     driver,label,input_element=status_fixture(True); button=Element(attrs={"title":"Save Document"},tag="a")
     label.on_click=lambda:setattr(input_element,"selected",False)
-    item=session(configured,driver); mocker.patch.object(item,"_save_button",return_value=button); closed=mocker.patch.object(item,"_close_save_success")
+    item=session(configured,driver); mocker.patch.object(item,"_save_button",return_value=button); confirmed=mocker.patch.object(item,"_confirm_save"); closed=mocker.patch.object(item,"_close_save_success")
     assert item._deactivate() == "Ex-Employee — บันทึกสำเร็จ"
-    assert label.clicked == 1 and button.clicked == 1; closed.assert_called_once()
+    assert label.clicked == 1 and button.clicked == 1; confirmed.assert_called_once(); closed.assert_called_once()
 
 
 def test_deactivate_unchecked_switch_skips_save(configured,mocker):
@@ -131,3 +131,15 @@ def test_persistent_access_denied_stops_after_configured_attempts(configured,moc
     wait=mocker.patch.object(item,"_await_employee_page",side_effect=CmsAccessDeniedError("denied"))
     with pytest.raises(CmsAccessDeniedError): item.open_employee_page()
     assert wait.call_count == 3
+
+def test_dom_confirm_save_clicks_yes(configured):
+    driver=Driver(); message=Element("Confirm save?"); yes=Element("Yes",tag="button")
+    message.mapping[SAVE_CONFIRM_YES]=[yes]; driver.mapping[SAVE_CONFIRM]=[message]
+    session(configured,driver)._confirm_save()
+    assert yes.clicked == 1
+
+
+def test_confirm_save_requires_yes(configured):
+    driver=Driver(); driver.mapping[SAVE_CONFIRM]=[]
+    with pytest.raises(RuntimeError,match="Confirm save"):
+        session(configured,driver)._confirm_save()

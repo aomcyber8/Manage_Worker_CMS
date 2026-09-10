@@ -36,6 +36,8 @@ STATUS_ON = (By.XPATH, ".//*[contains(concat(' ', normalize-space(@class), ' '),
 STATUS_OFF = (By.XPATH, ".//*[contains(concat(' ', normalize-space(@class), ' '), ' toggle--off ') and normalize-space(.)='Ex-Employee']")
 STATUS_INPUT_NEAR_LABEL = (By.XPATH, "./preceding-sibling::input[contains(concat(' ', normalize-space(@class), ' '), ' switch-input ')][1] | .//input[contains(concat(' ', normalize-space(@class), ' '), ' switch-input ')]")
 SAVE = (By.ID, "btn-save")
+SAVE_CONFIRM = (By.XPATH, "//*[normalize-space(.)='Confirm save?' or normalize-space(.)='ยืนยันการบันทึก?']")
+SAVE_CONFIRM_YES = (By.XPATH, ".//*[self::button or self::a or @role='button'][normalize-space(.)='Yes' or normalize-space(.)='ยืนยัน']")
 SAVE_SUCCESS = (By.XPATH, "//*[normalize-space(.)='Save Data Successful' or normalize-space(.)='บันทึกข้อมูลสำเร็จ']")
 SAVE_SUCCESS_OK = (By.XPATH, ".//*[self::button or self::a or @role='button'][normalize-space(.)='OK' or normalize-space(.)='ตกลง']")
 EMPLOYEE_LIST_LINK = (By.XPATH, "//a[@href='/Common/Employee' and (translate(normalize-space(@title),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='employee list' or @gotolist)]")
@@ -478,9 +480,44 @@ class SeleniumSession:
             return len(items) == 1 and not items[0].input.is_selected() and self._ex_text_visible(items[0])
         self._wait().until(changed)
         self.log("Status changed: .switch-input:checked → unchecked (Ex-Employee)")
-        self._click(self._save_button()); self._close_save_success()
+        self._click(self._save_button())
+        self.log("Save Document clicked: #btn-save")
+        self._confirm_save()
+        self._close_save_success()
         self.log("Save Data Successful — ปิดหน้าต่างด้วย OK แล้ว")
         return "Ex-Employee — บันทึกสำเร็จ"
+
+    def _confirm_save(self):
+        def confirm(_):
+            try:
+                alert = self.driver.switch_to.alert
+                text = alert.text.strip()
+                if "confirm save" in text.casefold() or "ยืนยันการบันทึก" in text:
+                    alert.accept()
+                    return True
+            except (NoAlertPresentException, AttributeError):
+                pass
+            for message in self.driver.find_elements(*SAVE_CONFIRM):
+                if not message.is_displayed():
+                    continue
+                container = message
+                for _ in range(6):
+                    buttons = [item for item in container.find_elements(*SAVE_CONFIRM_YES) if item.is_displayed() and item.is_enabled()]
+                    if len(buttons) == 1:
+                        self._click(buttons[0])
+                        return True
+                    if len(buttons) > 1:
+                        raise RuntimeError(f"พบปุ่ม Yes ในหน้าต่าง Confirm save มากกว่าหนึ่งปุ่ม ({len(buttons)} ปุ่ม)")
+                    try:
+                        container = container.find_element(By.XPATH, "..")
+                    except Exception:
+                        break
+            return False
+        try:
+            self._wait().until(confirm)
+        except TimeoutException as exc:
+            raise RuntimeError("คลิก Save Document แล้วแต่ไม่พบหน้าต่าง Confirm save หรือปุ่ม Yes") from exc
+        self.log("Confirm save — clicked Yes")
 
     def _close_save_success(self):
         def close(_):
