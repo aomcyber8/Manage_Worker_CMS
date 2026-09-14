@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from selenium import webdriver
 from selenium.common.exceptions import (
@@ -288,11 +288,11 @@ class SeleniumSession:
                 message = "ไม่พบ (ชื่อไม่มีนามสกุลสำหรับค้นหาซ้ำ)" if not last_name else "ไม่พบ (ค้นหาด้วยชื่อและนามสกุลแล้ว)"
                 self.log(message); return self._result(record, WorkerStatus.NOT_FOUND, message)
             if dry_run:
-                message = "พบข้อมูล — ชื่อตรงหนึ่งรายการ"
+                message = "พบข้อมูล — ผลค้นหาหนึ่งรายการ"
                 self.log(message); return self._result(record, WorkerStatus.SKIPPED, message)
-            links = [link for link in matches[0].name_cell.find_elements(By.CSS_SELECTOR, "a") if link.is_displayed() and name_key(link.text) == name_key(record.search_name)]
+            links = self._detail_links(matches[0].row)
             if len(links) != 1:
-                raise RuntimeError(f"พบแถวชื่อ '{record.search_name}' แต่ไม่พบลิงก์ชื่อที่ชัดเจนเพียงหนึ่งจุด (พบ {len(links)} จุด)")
+                raise RuntimeError(f"พบข้อมูลหนึ่งแถวสำหรับ '{record.search_name}' แต่ต้องพบลิงก์ Employee Detail เพียงหนึ่งจุด (พบ {len(links)} จุด)")
             detail = self._open_detail(links[0])
             message = self._deactivate()
             self._return_to_list(detail)
@@ -328,10 +328,13 @@ class SeleniumSession:
                     if previous and self._row_signature(refreshed) == previous:
                         raise RuntimeError(f"ตารางผลค้นหาไม่อัปเดตหลังส่งทั้งปุ่มแว่นขยายและ Enter สำหรับ '{term}' ภายใน {self.timeout} วินาที") from exc
         rows, matches = self._read_search_grid(target_name)
-        self.log(f"Employee grid rows: {len(rows)}")
+        if len(rows) == 1:
+            self.log("Employee grid rows: 1 — ถือว่าพบข้อมูลจากผลลัพธ์หนึ่งแถว")
+        else:
+            self.log(f"Employee grid rows: {len(rows)}")
         if not rows:
             self.log(f"CMS ไม่คืนแถวผลลัพธ์สำหรับคำค้น: {term}")
-        elif not matches:
+        elif len(rows) > 1 and not matches:
             samples = " | ".join(filter(None, (self._safe_row_text(row) for row in rows[:3])))
             self.log(f"CMS คืน {len(rows)} แถว แต่ไม่มีชื่อเต็มตรงกับ '{target_name}'" + (f" — ตัวอย่าง: {samples}" if samples else ""))
             self.screenshot("search_mismatch_" + term)
@@ -365,6 +368,8 @@ class SeleniumSession:
                     for cell in self._result_cells(row):
                         if name_key(cell.text) == target:
                             matches.append(SearchMatch(row, cell)); break
+                if len(rows) == 1 and not matches:
+                    matches.append(SearchMatch(rows[0], self._result_cells(rows[0])[0]))
                 return rows, matches
             except StaleElementReferenceException:
                 return False
@@ -390,6 +395,16 @@ class SeleniumSession:
     def _safe_row_text(row):
         try: return " ".join(row.text.split())
         except StaleElementReferenceException: return ""
+
+    def _detail_links(self, row):
+        links = []
+        for cell in self._result_cells(row):
+            for link in cell.find_elements(By.CSS_SELECTOR, "a[href]"):
+                href = (link.get_attribute("href") or "").strip()
+                target = urlparse(urljoin(self.site.employee_url, href))
+                if link.is_displayed() and link.is_enabled() and self._is_detail_path(target) and link not in links:
+                    links.append(link)
+        return links
 
     @staticmethod
     def _describe(element):

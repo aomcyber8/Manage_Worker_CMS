@@ -6,7 +6,7 @@ import pytest
 
 from worker_cms.models import CmsSite, WorkerStatus
 from worker_cms.selenium_cms import (
-    SAVE, SAVE_CONFIRM, SAVE_CONFIRM_YES, STATUS_INPUT_NEAR_LABEL, STATUS_OFF, STATUS_ON, STATUS_SWITCH_LABELS,
+    GRID_ROWS, RESULT_CELLS, SAVE, SAVE_CONFIRM, SAVE_CONFIRM_YES, STATUS_INPUT_NEAR_LABEL, STATUS_OFF, STATUS_ON, STATUS_SWITCH_LABELS,
     CmsAccessDeniedError, SearchMatch, SeleniumSession,
 )
 
@@ -94,9 +94,32 @@ def test_access_denied_includes_id(configured):
 
 
 def test_dry_run_returns_found_without_detail(configured,record,mocker):
-    item=session(configured); mocker.patch.object(item,"_search",return_value=[SearchMatch(Element(),Element())]); detail=mocker.patch.object(item,"_open_detail")
+    item=session(configured); search=mocker.patch.object(item,"_search",return_value=[SearchMatch(Element(),Element())]); detail=mocker.patch.object(item,"_open_detail")
     result=item.process(record,1,1,True)
-    assert result.status == WorkerStatus.SKIPPED; detail.assert_not_called()
+    assert result.status == WorkerStatus.SKIPPED; assert search.call_count == 1; detail.assert_not_called()
+
+
+def test_single_grid_row_is_found_despite_unrecognized_prefix(configured):
+    driver=Driver(); row=Element("1 จ.ส.อ. วัฒนา ก่ำเชียงคำ ผู้ช่วยผู้จัดการอาคาร"); cell=Element("จ.ส.อ. วัฒนา ก่ำเชียงคำ")
+    row.mapping[RESULT_CELLS]=[cell]; driver.mapping[GRID_ROWS]=[row]
+    rows,matches=session(configured,driver)._read_search_grid("วัฒนา ก่ำเชียงคำ")
+    assert rows == [row] and len(matches) == 1 and matches[0].row is row
+
+
+def test_deactivate_uses_employee_detail_link_from_single_row(configured,record,mocker):
+    driver=Driver(); row=Element(); cell=Element("จ.ส.อ. สมชาย ใจดี"); link=Element("จ.ส.อ. สมชาย ใจดี",attrs={"href":"/Common/Employee/Form?id=7"},tag="a")
+    row.mapping[RESULT_CELLS]=[cell]; cell.mapping[("css selector","a[href]")]=[link]
+    item=session(configured,driver); mocker.patch.object(item,"_search",return_value=[SearchMatch(row,cell)])
+    opened=mocker.patch.object(item,"_open_detail",return_value=object()); mocker.patch.object(item,"_deactivate",return_value="Ex-Employee — บันทึกสำเร็จ"); mocker.patch.object(item,"_return_to_list")
+    result=item.process(record,1,1,False)
+    assert result.status == WorkerStatus.SUCCESS; opened.assert_called_once_with(link)
+
+
+def test_multiple_grid_rows_still_require_exact_name(configured):
+    driver=Driver(); exact_row=Element(); other_row=Element(); exact_cell=Element("นายสมชาย ใจดี"); other_cell=Element("สมชาย ใจดำ")
+    exact_row.mapping[RESULT_CELLS]=[exact_cell]; other_row.mapping[RESULT_CELLS]=[other_cell]; driver.mapping[GRID_ROWS]=[exact_row,other_row]
+    rows,matches=session(configured,driver)._read_search_grid("สมชาย ใจดี")
+    assert rows == [exact_row,other_row] and len(matches) == 1 and matches[0].row is exact_row
 
 
 def test_name_then_surname_not_found(configured,record,mocker):
