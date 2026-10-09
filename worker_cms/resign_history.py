@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -69,9 +70,30 @@ class ResignHistoryService:
 
     def load(self, month: str) -> list[WorkerRecord]:
         try:
-            selected_month = datetime.strptime(month, "%Y-%m").date().replace(day=1)
+            start = datetime.strptime(month, "%Y-%m").date().replace(day=1)
         except (TypeError, ValueError) as exc:
             raise ValueError("กรุณาระบุเดือนและปีให้ถูกต้อง") from exc
+        end = date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1)
+        return self._load_range(start, date.fromordinal(end.toordinal() - 1), f"เดือน {month}", False)
+
+    def load_year_range(self, start_year: object, end_year: object) -> list[WorkerRecord]:
+        first = self._parse_year(start_year, "ปีเริ่มต้น")
+        last = self._parse_year(end_year, "ปีสิ้นสุด")
+        if first > last:
+            raise ValueError("ปีเริ่มต้นต้องไม่มากกว่าปีสิ้นสุด")
+        return self._load_range(date(first, 1, 1), date(last, 12, 31), f"ช่วงปี {first}-{last}", True)
+
+    @staticmethod
+    def _parse_year(value: object, label: str) -> int:
+        text = str(value or "").strip()
+        if not re.fullmatch(r"\d{4}", text):
+            raise ValueError(f"{label}ต้องเป็นตัวเลข 4 หลัก")
+        year = int(text)
+        if not 1 <= year <= 9999:
+            raise ValueError(f"{label}ไม่ถูกต้อง")
+        return year
+
+    def _load_range(self, start: date, end: date, label: str, allow_duplicate_names: bool) -> list[WorkerRecord]:
         selected: list[SourceRow] = []
         total_pages = 1
         page = 1
@@ -84,22 +106,17 @@ class ResignHistoryService:
                 raise RuntimeError(f"เชื่อมต่อเว็บข้อมูลผู้ลาออกไม่สำเร็จที่หน้า {page}") from exc
             if page == 1:
                 total_pages = min(parsed_pages, 2_000)
-            reached_older = False
-            for row in rows:
-                row_month = row.date.replace(day=1)
-                if row_month == selected_month:
-                    selected.append(row)
-                if row.date < selected_month:
-                    reached_older = True
-            if reached_older or page >= total_pages:
+            selected.extend(row for row in rows if start <= row.date <= end)
+            if any(row.date < start for row in rows) or page >= total_pages:
                 break
             page += 1
         if not selected:
-            raise ValueError(f"ไม่พบข้อมูลผู้ลาออกในเดือน {month}")
-        return self._convert(selected)
+            raise ValueError(f"ไม่พบข้อมูลผู้ลาออกใน{label}")
+        selected.sort(key=lambda row: row.date, reverse=True)
+        return self._convert(selected, allow_duplicate_names)
 
     @staticmethod
-    def _convert(source: list[SourceRow]) -> list[WorkerRecord]:
+    def _convert(source: list[SourceRow], allow_duplicate_names: bool = False) -> list[WorkerRecord]:
         records: list[WorkerRecord] = []
         seen: dict[str, int] = {}
         for index, row in enumerate(source, 1):
@@ -110,9 +127,9 @@ class ResignHistoryService:
             if not search_name:
                 raise ValueError(f"ข้อมูลเว็บรายการที่ {index} ไม่มีชื่อสำหรับค้นหา")
             key = name_key(search_name)
-            if key in seen:
+            if not allow_duplicate_names and key in seen:
                 raise ValueError(f"ชื่อซ้ำหลังตัดคำนำหน้า: {search_name} (รายการที่ {seen[key]} และ {index})")
-            seen[key] = index
+            seen.setdefault(key, index)
             records.append(WorkerRecord(index, row.id, search_name, row.date.strftime("%d/%m/%Y"), row.id,
                                         row.no, row.name, row.email, row.position, row.department))
         return records

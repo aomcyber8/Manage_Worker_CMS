@@ -23,6 +23,12 @@ def test_begin_dry_run_clears_results(configured, record):
     assert state.active and state.results == []
 
 
+def test_year_range_state_rejects_cms_actions(configured, record):
+    state=StateService(configured); state.preview(CmsSite.parse("SENA"),"range.xlsx",[record],cms_actions_allowed=False)
+    assert not state.snapshot()["cms_actions_allowed"]
+    with pytest.raises(ValueError,match="Export Excel เท่านั้น"): state.begin(CmsSite.parse("SENA"),"dry-run",state.revision)
+
+
 def test_wrong_revision(configured, record):
     state=StateService(configured); state.preview(CmsSite.parse("SENA"),"a.xlsx",[record])
     with pytest.raises(ValueError, match="อ่านไฟล์"): state.begin(CmsSite.parse("SENA"),"dry-run","old")

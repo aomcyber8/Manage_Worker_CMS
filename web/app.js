@@ -1,7 +1,8 @@
 const $ = (id) => document.getElementById(id);
 let state = {}, busy = false;
 const today = new Date();
-const localMonth = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+const currentYear = today.getFullYear();
+const localMonth = currentYear + '-' + String(today.getMonth() + 1).padStart(2, '0');
 const siteLabels = {SENA:"SENA — sena.on.lk",SENX:"SENX — senx.on.lk"};
 const labels = {idle:'พร้อมใช้งาน',ready:'พร้อมตรวจสอบ',running:'กำลังทำงาน',checking:'กำลังทดสอบค้นหารายการ',deactivating:'กำลังปิดสิทธิ์ใช้งาน',finishing:'กำลังออกจากระบบ',done:'งานเสร็จแล้ว',stopped:'หยุดงานแล้ว',failed:'งานมีข้อผิดพลาด'};
 const searchResultLabels = {SUCCESS:'Ex-Employee',SKIPPED:'พบข้อมูล',NOT_FOUND:'ไม่พบ',FAILED:'ผิดพลาด'};
@@ -44,10 +45,12 @@ function render() {
   const dryRunComplete=state.phase==='done' && state.mode==='dry-run' && validDryResults;
   const foundCount=results.filter(result=>result.status==='SKIPPED').length;
   const unavailable=busy || active || !records.length || !state.configured || !$('site').value || $('site').value!==state.site;
-  $('dry').disabled=unavailable;
-  $('deactivate').disabled=unavailable || !dryRunComplete || foundCount===0;
+  const cmsActionsAllowed=state.cms_actions_allowed!==false;
+  $('dry').disabled=unavailable || !cmsActionsAllowed;
+  $('deactivate').disabled=unavailable || !cmsActionsAllowed || !dryRunComplete || foundCount===0;
   $('export').disabled=busy || active || !records.length;
-  for(const id of ['preview','file','header-row','sheet','site','resign-month','fetch-resign']) $(id).disabled=busy || active;
+  $('export-only-hint').hidden=cmsActionsAllowed;
+  for(const id of ['preview','file','header-row','sheet','site','resign-period','resign-month','resign-start-year','resign-end-year','fetch-resign']) $(id).disabled=busy || active;
   $('stop').hidden=!active;
   const byRow=new Map(results.map(result=>[result.row,result]));
   const signature=JSON.stringify([records,results]);
@@ -81,15 +84,34 @@ function showImportProgress(title,detail,value) {
   else progress.value=value;
   if(!$('import-progress-dialog').open) $('import-progress-dialog').showModal();
 }
+function updateResignPeriod() {
+  const yearly=$('resign-period').value==='year-range';
+  $('resign-month-fields').hidden=yearly;
+  $('resign-year-fields').hidden=!yearly;
+}
 $('resign-month').value=localMonth;
+$('resign-start-year').value=String(currentYear);
+$('resign-end-year').value=String(currentYear);
+$('resign-period').addEventListener('change',updateResignPeriod);
+updateResignPeriod();
 $('site').addEventListener('change',()=>{render();if(state.records?.length && $('site').value!==state.site) error('เปลี่ยนระบบ CMS แล้ว กรุณาอ่านไฟล์และตรวจรายการใหม่');else error('');});
 $('fetch-resign').addEventListener('click',()=>action(async()=>{
-  const site=$('site').value, month=$('resign-month').value;
+  const site=$('site').value, periodType=$('resign-period').value;
   if(!site) throw new Error('กรุณาเลือกระบบ CMS');
-  if(!month) throw new Error('กรุณาระบุเดือนและปีที่ต้องการดึงข้อมูล');
+  let payload={site,period_type:periodType};
+  if(periodType==='month') {
+    const month=$('resign-month').value;
+    if(!month) throw new Error('กรุณาระบุเดือนและปีที่ต้องการดึงข้อมูล');
+    payload.month=month;
+  } else {
+    const startYear=$('resign-start-year').value.trim(), endYear=$('resign-end-year').value.trim();
+    if(!/^\d{4}$/.test(startYear) || !/^\d{4}$/.test(endYear)) throw new Error('ปีเริ่มต้นและปีสิ้นสุดต้องเป็นตัวเลข 4 หลัก');
+    if(Number(startYear)>Number(endYear)) throw new Error('ปีเริ่มต้นต้องไม่มากกว่าปีสิ้นสุด');
+    payload.start_year=startYear; payload.end_year=endYear;
+  }
   showImportProgress('กำลังดึงข้อมูลจากเว็บ…','กำลังตรวจสอบตารางประวัติผู้ที่ลาออกแล้ว',null);
   try {
-    const result=await api('/api/resign-history',{site,month});
+    const result=await api('/api/resign-history',payload);
     showImportProgress('ดึงข้อมูลสำเร็จ',result.count.toLocaleString()+' รายการ',100);
   } finally {
     if($('import-progress-dialog').open) $('import-progress-dialog').close();

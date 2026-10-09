@@ -23,7 +23,7 @@ def headers(state, host="127.0.0.1:8765"): return {"Host":host,"X-CSRF-Token":st
 
 def test_state_contract(api):
     client,state,_,_=api; response=client.get("/api/state",headers={"Host":"127.0.0.1:8765"})
-    assert response.status_code==200 and set(response.json) == {"phase","active","mode","site","filename","revision","records","results","logs","error","token","configured"}
+    assert response.status_code==200 and set(response.json) == {"phase","active","mode","site","filename","revision","cms_actions_allowed","records","results","logs","error","token","configured"}
 
 
 def test_host_rejected(api):
@@ -49,6 +49,16 @@ def test_resign_history(api,record):
     client,state,_,history=api; history.load.return_value=[record]
     response=client.post("/api/resign-history",headers=headers(state),json={"site":"SENA","month":"2026-04"})
     assert response.json=={"ok":True,"count":1} and state.filename=="resign-history-2026-04.xlsx"
+    assert state.cms_actions_allowed; history.load.assert_called_once_with("2026-04")
+
+
+def test_resign_history_year_range_is_export_only(api,record):
+    client,state,_,history=api; history.load_year_range.return_value=[record]
+    response=client.post("/api/resign-history",headers=headers(state),json={"site":"SENA","period_type":"year-range","start_year":"2024","end_year":"2026"})
+    assert response.json=={"ok":True,"count":1} and state.filename=="resign-history-2024-2026.xlsx"
+    assert not state.cms_actions_allowed; history.load_year_range.assert_called_once_with("2024","2026")
+    exported=client.post("/api/export",headers=headers(state),json={})
+    assert exported.status_code==200 and exported.mimetype.endswith("spreadsheetml.sheet")
 
 
 def test_start_forwards_request(api,record):

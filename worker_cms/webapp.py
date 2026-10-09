@@ -90,9 +90,20 @@ def create_app(config: Config | None = None, *, state=None, workflow=None, resig
             raise RuntimeError("มีงานกำลังทำงาน กรุณารอให้จบก่อน")
         data = request.get_json(silent=True) or {}
         site = CmsSite.parse(data.get("site"))
-        month = str(data.get("month") or "")
-        records = resign_history.load(month)
-        state.preview(site, f"resign-history-{month}.xlsx", records)
+        period_type = str(data.get("period_type") or ("month" if data.get("month") else ""))
+        if period_type == "month":
+            month = str(data.get("month") or "")
+            records = resign_history.load(month)
+            filename = f"resign-history-{month}.xlsx"
+            cms_actions_allowed = True
+        elif period_type == "year-range":
+            start_year, end_year = data.get("start_year"), data.get("end_year")
+            records = resign_history.load_year_range(start_year, end_year)
+            filename = f"resign-history-{str(start_year).strip()}-{str(end_year).strip()}.xlsx"
+            cms_actions_allowed = False
+        else:
+            raise ValueError("กรุณาเลือกรูปแบบการดึงข้อมูล")
+        state.preview(site, filename, records, cms_actions_allowed=cms_actions_allowed)
         return jsonify(ok=True, count=len(records))
 
     @app.post("/api/start")

@@ -18,6 +18,7 @@ class StateService:
         self.site = ""
         self.filename = ""
         self.revision = ""
+        self.cms_actions_allowed = True
         self.records: list[WorkerRecord] = []
         self.results: list[WorkerResult] = []
         self.logs: list[str] = []
@@ -29,18 +30,20 @@ class StateService:
             return {
                 "phase": self.phase, "active": self.active, "mode": self.mode, "site": self.site,
                 "filename": self.filename, "revision": self.revision,
+                "cms_actions_allowed": self.cms_actions_allowed,
                 "records": [item.to_dict() for item in self.records],
                 "results": [item.to_dict() for item in self.results],
                 "logs": list(self.logs), "error": self.error, "token": self.token,
                 "configured": self.config.configured,
             }
 
-    def preview(self, site: CmsSite, filename: str, records: list[WorkerRecord]) -> None:
+    def preview(self, site: CmsSite, filename: str, records: list[WorkerRecord], *, cms_actions_allowed: bool = True) -> None:
         with self._lock:
             if self.active:
                 raise RuntimeError("มีงานกำลังทำงาน กรุณารอให้จบก่อน")
             self.phase, self.active, self.mode = "ready", False, "dry-run"
             self.site, self.filename = site.name, filename
+            self.cms_actions_allowed = bool(cms_actions_allowed)
             self.revision = str(uuid.uuid4())
             self.records, self.results, self.logs, self.error = list(records), [], [], ""
 
@@ -48,6 +51,8 @@ class StateService:
         with self._lock:
             if self.active:
                 raise RuntimeError("มีงานกำลังทำงาน กรุณารอให้จบก่อน")
+            if not self.cms_actions_allowed:
+                raise ValueError("ข้อมูลช่วงปีใช้สำหรับ Export Excel เท่านั้น")
             if self.site != site.name:
                 raise ValueError("ระบบ CMS เปลี่ยนไป กรุณาอ่านไฟล์และตรวจรายการใหม่")
             if not self.records or self.revision != revision:
